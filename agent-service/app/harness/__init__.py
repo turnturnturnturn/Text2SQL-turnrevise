@@ -11,11 +11,13 @@ from app.harness.models import (
     RunStatus,
 )
 from app.harness.request import HarnessRun, RequestHarness
+from app.harness.lifecycle import HarnessLifecycleHook
 from app.harness.store import InMemoryRunStore, RunStore
 
 __all__ = [
     "HarnessBudget",
     "HarnessRun",
+    "HarnessLifecycleHook",
     "HarnessBudgetExceeded",
     "InMemoryRunStore",
     "InvalidRunTransition",
