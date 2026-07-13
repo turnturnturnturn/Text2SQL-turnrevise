@@ -31,3 +31,39 @@ EVAL_AUDIT_DATABASE_URL='postgresql://管理员:密码@localhost:5432/enterprise
 报告会把 Retrieval、Oracle SQL 和 Qwen3-4B 实际 Agent 指标分开展示，不能用 Oracle 指标代替模型生成 SQL 的准确率。
 
 报告写入 `evaluation/reports/`，该目录被 Git 忽略，避免把一次运行的指标误当作固定结论提交。
+
+## Harness 指标
+
+如需在同一 JSON/Markdown 报告中聚合 Harness 与记忆指标，传入真实运行轨迹：
+
+```bash
+.venv/bin/python ../scripts/evaluate_retrieval.py \
+  --database-url "$DATABASE_URL" \
+  --harness-input ../evaluation/harness-input.json
+```
+
+`harness-input.json` 的最小结构为：
+
+```json
+{
+  "runs": [
+    {
+      "status": "COMPLETED",
+      "tool_call_count": 2,
+      "correction_attempted": false,
+      "latency_ms": 830
+    }
+  ],
+  "memory_cases": [
+    {
+      "id": "memory-001",
+      "gold_memory_ids": ["expected-id"],
+      "retrieved_memory_ids": ["expected-id"],
+      "incorrect_memory_present": false,
+      "incorrect_memory_adopted": false
+    }
+  ]
+}
+```
+
+纠错成功率只以 `correction_attempted=true` 的运行为分母；Memory Recall@5 只以声明 `gold_memory_ids` 的样本为分母；错误记忆采用率只以 `incorrect_memory_present=true` 的注入样本为分母。没有可用样本时指标为 `null`，不预设为 0% 或 100%。

@@ -1,6 +1,13 @@
 from decimal import Decimal
 
-from app.evaluation import compare_records, extract_dataframe_rows
+import pytest
+
+from app.evaluation import (
+    aggregate_harness_metrics,
+    compare_records,
+    extract_dataframe_rows,
+    harness_metrics_markdown,
+)
 
 
 def test_compare_records_ignores_row_and_column_order():
@@ -27,3 +34,79 @@ def test_extract_dataframe_rows_only_accepts_safe_query_component():
         {"rich": {"type": "dataframe", "data": {"title": "安全查询结果", "data": [{"x": 1}]}}},
     ]
     assert extract_dataframe_rows(chunks) == [{"x": 1}]
+
+
+def test_aggregate_harness_metrics_uses_explicit_denominators():
+    metrics = aggregate_harness_metrics(
+        [
+            {"status": "COMPLETED", "tool_call_count": 2, "latency_ms": 100},
+            {
+                "status": "COMPLETED",
+                "tool_call_count": 4,
+                "latency_ms": 300,
+                "correction_attempted": True,
+                "correction_succeeded": True,
+            },
+            {
+                "status": "FAILED",
+                "failure_category": "TIMEOUT",
+                "tool_call_count": 3,
+                "latency_ms": 500,
+                "correction_attempted": True,
+                "correction_succeeded": False,
+            },
+            {"status": "CANCELLED"},
+        ],
+        [
+            {
+                "id": "m1",
+                "gold_memory_ids": ["a"],
+                "retrieved_memory_ids": ["x", "a", "z"],
+                "incorrect_memory_present": True,
+                "incorrect_memory_adopted": False,
+            },
+            {
+                "id": "m2",
+                "gold_memory_ids": ["b"],
+                "retrieved_memory_ids": ["x", "y", "z", "q", "r", "b"],
+                "incorrect_memory_present": True,
+                "incorrect_memory_adopted": True,
+            },
+        ],
+    )
+
+    assert metrics["completion_rate"] == 0.5
+    assert metrics["average_tool_calls"] == 3.0
+    assert metrics["correction_success_rate"] == 0.5
+    assert metrics["memory_recall_at_5"] == 0.5
+    assert metrics["incorrect_memory_adoption_rate"] == 0.5
+    assert metrics["average_latency_ms"] == 300.0
+    assert metrics["failure_counts"] == {"CANCELLED": 1, "TIMEOUT": 1}
+    assert metrics["memory_details"][1]["retrieved_memory_ids"] == ["x", "y", "z", "q", "r"]
+
+
+def test_aggregate_harness_metrics_keeps_unmeasured_values_null():
+    metrics = aggregate_harness_metrics([], [])
+    assert metrics["completion_rate"] is None
+    assert metrics["average_tool_calls"] is None
+    assert metrics["correction_success_rate"] is None
+    assert metrics["memory_recall_at_5"] is None
+    assert metrics["incorrect_memory_adoption_rate"] is None
+    assert metrics["average_latency_ms"] is None
+    assert "无可用样本" in "\n".join(harness_metrics_markdown(metrics))
+
+
+def test_aggregate_harness_metrics_rejects_invalid_telemetry():
+    with pytest.raises(ValueError, match="non-negative"):
+        aggregate_harness_metrics([{"status": "FAILED", "latency_ms": -1}], [])
+    with pytest.raises(ValueError, match="correction_succeeded"):
+        aggregate_harness_metrics([{"status": "FAILED", "correction_attempted": True}], [])
+    with pytest.raises(ValueError, match="incorrect_memory_adopted"):
+        aggregate_harness_metrics(
+            [],
+            [{"incorrect_memory_present": True, "gold_memory_ids": [], "retrieved_memory_ids": []}],
+        )
+
+
+def test_harness_metrics_markdown_does_not_claim_unrun_metrics():
+    assert "未运行" in "\n".join(harness_metrics_markdown(None))

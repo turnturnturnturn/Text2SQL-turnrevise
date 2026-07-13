@@ -24,8 +24,10 @@ if str(AGENT_ROOT) not in sys.path:
 from app.db.safe_postgres import SafePostgresRunner
 from app.evaluation import (
     LiveAgentClient,
+    aggregate_harness_metrics,
     compare_records,
     extract_dataframe_rows,
+    harness_metrics_markdown,
     instruction_hash,
 )
 from app.retrieval import HybridKnowledgeRetriever, PostgresKnowledgeStore
@@ -269,6 +271,7 @@ def markdown_report(result: dict[str, Any]) -> str:
         rows.append(f"| {mode} | {percent(metrics['recall_at_3'])} | {percent(metrics['recall_at_5'])} | {metrics['mrr']:.4f} | {metrics['fallback_count']} |")
     sql = result["oracle_sql"]
     live = result["live_agent"]
+    harness = result.get("harness")
     live_lines = ["- 未运行；使用 `--live-agent` 启用本地 Qwen 端到端评测。"]
     if live.get("enabled"):
         live_lines = [
@@ -303,6 +306,10 @@ def markdown_report(result: dict[str, Any]) -> str:
             "",
             *live_lines,
             "",
+            "## Harness 与记忆运行指标",
+            "",
+            *harness_metrics_markdown(harness),
+            "",
             "## 可复现命令",
             "",
             "```bash",
@@ -329,6 +336,11 @@ async def main() -> None:
     parser.add_argument("--password", default=os.getenv("EVAL_PASSWORD"))
     parser.add_argument("--audit-database-url", default=os.getenv("EVAL_AUDIT_DATABASE_URL"))
     parser.add_argument("--agent-image-id", default=os.getenv("AGENT_IMAGE_ID"))
+    parser.add_argument(
+        "--harness-input",
+        type=Path,
+        help="JSON telemetry with 'runs' and 'memory_cases' arrays",
+    )
     args = parser.parse_args()
     if args.top_k < 5:
         raise ValueError("--top-k must be at least 5 to report Recall@5")
@@ -354,6 +366,16 @@ async def main() -> None:
         if args.live_agent
         else {"enabled": False}
     )
+    harness = None
+    if args.harness_input:
+        harness_input = json.loads(args.harness_input.read_text(encoding="utf-8"))
+        if not isinstance(harness_input.get("runs"), list) or not isinstance(
+            harness_input.get("memory_cases"), list
+        ):
+            raise ValueError("--harness-input must contain runs and memory_cases arrays")
+        harness = aggregate_harness_metrics(
+            harness_input["runs"], harness_input["memory_cases"]
+        )
     result = {
         "generated_at": datetime.now(UTC).isoformat(),
         "suite_version": "2026-07-10",
@@ -366,6 +388,7 @@ async def main() -> None:
         },
         "oracle_sql": await evaluate_oracle_sql(questions, args.database_url),
         "live_agent": live_agent,
+        "harness": harness,
     }
     args.output_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
