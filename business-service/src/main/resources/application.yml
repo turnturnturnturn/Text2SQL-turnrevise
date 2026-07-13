@@ -1,0 +1,30 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/enterprise_copilot}
+    username: ${DB_USERNAME:copilot_admin}
+    password: ${DB_PASSWORD:copilot_admin_dev}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+        format_sql: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+copilot:
+  jwt-secret: ${JWT_SECRET:dev-only-secret-change-before-use-123456}
+  jwt-ttl-minutes: 60
+  internal-service-token: ${INTERNAL_SERVICE_TOKEN:dev-internal-token}
+  approval-ttl-minutes: 5
+

@@ -1,0 +1,66 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: enterprise_copilot
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-copilot_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-copilot_admin_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+      - ./database/migrations:/migrations:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  business-service:
+    build: ./business-service
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/enterprise_copilot
+      DB_USERNAME: ${POSTGRES_ADMIN_USER:-copilot_admin}
+      DB_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-copilot_admin_dev}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-before-use-123456}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  agent-service:
+    build: ./agent-service
+    environment:
+      DATABASE_URL: postgresql://copilot_readonly:copilot_readonly_dev@postgres:5432/enterprise_copilot
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-before-use-123456}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token}
+      BUSINESS_SERVICE_URL: http://business-service:8080
+      PUBLIC_BUSINESS_SERVICE_URL: http://localhost:8080
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
+      AGENT_ALLOWED_ORIGINS: ${AGENT_ALLOWED_ORIGINS:-http://localhost:8000,http://localhost:8080}
+      AUDIT_FAIL_CLOSED: ${AUDIT_FAIL_CLOSED:-true}
+      RETRIEVAL_MODE: ${RETRIEVAL_MODE:-hybrid}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
+      RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-8}
+      HF_HOME: /models
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      business-service:
+        condition: service_started
+    volumes:
+      - embedding-cache:/models
+
+volumes:
+  postgres-data:
+  embedding-cache:
