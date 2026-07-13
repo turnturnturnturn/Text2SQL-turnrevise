@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import logging
-import hashlib
-import uuid
-from contextvars import ContextVar, Token
+from contextvars import Token
 from typing import AsyncGenerator
 from typing import Any
 
@@ -14,29 +12,31 @@ from vanna.core.audit import AuditEventType
 from vanna.core.user import RequestContext
 
 from app.business_client import BusinessServiceClient
+from app.harness.context import (
+    get_instruction_hash,
+    get_instruction_text,
+    get_run_id,
+    reset_instruction_hash as _reset_instruction_hash,
+    set_instruction_hash as _set_instruction_hash,
+)
+from app.harness.request import RequestHarness
 
 
 logger = logging.getLogger(__name__)
-_instruction_hash: ContextVar[str | None] = ContextVar(
-    "instruction_hash", default=None
-)
-_instruction_text: ContextVar[str | None] = ContextVar(
-    "instruction_text", default=None
-)
 
 
 def set_instruction_hash(value: str) -> Token[str | None]:
     """Bind an instruction hash to the current asynchronous request context."""
-    return _instruction_hash.set(value)
+    return _set_instruction_hash(value)
 
 
 def reset_instruction_hash(token: Token[str | None]) -> None:
-    _instruction_hash.reset(token)
+    _reset_instruction_hash(token)
 
 
 def get_current_instruction() -> str | None:
     """Return request-local text without persisting it in audit payloads."""
-    return _instruction_text.get()
+    return get_instruction_text()
 
 
 class BusinessAuditLogger(AuditLogger):
@@ -63,12 +63,14 @@ class BusinessAuditLogger(AuditLogger):
         details = event_data.get("details", {})
         event_instruction_hash = (
             details.get("instruction_hash") if isinstance(details, dict) else None
-        ) or _instruction_hash.get()
+        ) or get_instruction_hash()
+        request_id = get_run_id() or event.request_id
+        event_data["request_id"] = request_id
 
         payload: dict[str, Any] = {
             "eventType": str(event.event_type.value),
             "userId": event.user_id,
-            "requestId": event.request_id,
+            "requestId": request_id,
             "generatedSql": generated_sql,
             "originalInstructionHash": event_instruction_hash,
             "success": bool(event_data.get("success", True)),
@@ -86,6 +88,15 @@ class BusinessAuditLogger(AuditLogger):
 class AuditedAgent(Agent):
     """Add the user-instruction audit event missing from Vanna 2.0.2."""
 
+    def __init__(
+        self,
+        *args: Any,
+        request_harness: RequestHarness | None = None,
+        **kwargs: Any,
+    ):
+        super().__init__(*args, **kwargs)
+        self.request_harness = request_harness or RequestHarness()
+
     async def _send_message(
         self,
         request_context: RequestContext,
@@ -94,10 +105,11 @@ class AuditedAgent(Agent):
         conversation_id: str | None = None,
     ) -> AsyncGenerator[UiComponent, None]:
         user = await self.user_resolver.resolve_user(request_context)
-        instruction_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()
-        token = set_instruction_hash(instruction_hash)
-        text_token = _instruction_text.set(message)
-        try:
+
+        async def operation(_run):
+            instruction_hash = get_instruction_hash()
+            run_id = get_run_id()
+            assert instruction_hash is not None and run_id is not None
             await self.audit_logger.log_event(
                 AuditEvent(
                     event_type=AuditEventType.MESSAGE_RECEIVED,
@@ -105,7 +117,7 @@ class AuditedAgent(Agent):
                     username=user.username,
                     user_groups=user.group_memberships,
                     conversation_id=conversation_id or "",
-                    request_id=str(uuid.uuid4()),
+                    request_id=run_id,
                     remote_addr=request_context.remote_addr,
                     details={
                         "instruction_hash": instruction_hash,
@@ -117,6 +129,11 @@ class AuditedAgent(Agent):
                 request_context, message, conversation_id=conversation_id
             ):
                 yield component
-        finally:
-            _instruction_text.reset(text_token)
-            reset_instruction_hash(token)
+
+        async for component in self.request_harness.execute_stream(
+            instruction=message,
+            user_id=user.id,
+            conversation_id=conversation_id,
+            operation=operation,
+        ):
+            yield component

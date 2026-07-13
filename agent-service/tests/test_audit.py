@@ -8,6 +8,7 @@ from app.audit import (
     reset_instruction_hash,
     set_instruction_hash,
 )
+from app.harness import InMemoryRunStore, RequestHarness, get_run_id
 
 
 class FakeBusinessClient:
@@ -81,3 +82,37 @@ async def test_tool_audit_inherits_request_instruction_hash():
         reset_instruction_hash(token)
 
     assert client.events[0]["originalInstructionHash"] == "b" * 64
+
+
+@pytest.mark.asyncio
+async def test_harness_overrides_all_audit_request_ids_with_run_id():
+    client = FakeBusinessClient()
+    store = InMemoryRunStore()
+    harness = RequestHarness(store)
+    observed_run_id = None
+
+    async def operation(_run):
+        nonlocal observed_run_id
+        observed_run_id = get_run_id()
+        first = sql_event()
+        second = sql_event()
+        await BusinessAuditLogger(client).log_event(first)
+        await BusinessAuditLogger(client).log_event(second)
+        yield "done"
+
+    assert [
+        item
+        async for item in harness.execute_stream(
+            instruction="query",
+            user_id="analyst",
+            conversation_id="conversation-1",
+            operation=operation,
+        )
+    ] == ["done"]
+
+    assert observed_run_id is not None
+    assert {event["requestId"] for event in client.events} == {observed_run_id}
+    assert {event["details"]["request_id"] for event in client.events} == {
+        observed_run_id
+    }
+    assert all(event["originalInstructionHash"] for event in client.events)
