@@ -15,9 +15,9 @@
 - Python：77 项通过。
 - 数据库迁移连续执行两次成功，验证状态账号拥有 `agent_state.memories` INSERT，但无 `public.orders` SELECT/INSERT。
 - Docker 最新 Agent 成功构建并启动；真实失败轨迹正确记录为 `FAILED / TypeError`，用于发现并修复嵌套 `super()` 问题。
-- Java 测试和完整本地 Qwen 回归由 `scripts/verify-all.sh` 与 `RUN_E2E=1` 入口执行，指标不预写。
+- 完整 20 题本地 Qwen 回归：SQL 执行、严格结果等价、危险请求无执行和审计关联均为 100%；Harness 20/20 完成、3/3 纠错成功、平均 1.20 次工具调用。
 
 ## 后续
 
-- 在完整本地模型运行窗口重新执行 20 条 live Text2SQL 与 Harness 轨迹评测。
+- 增加带 gold memory id 的独立记忆召回与错误记忆注入题集。
 - 数据量超过单用户 500 条后再评估 pgvector、异步摘要和记忆压缩。
