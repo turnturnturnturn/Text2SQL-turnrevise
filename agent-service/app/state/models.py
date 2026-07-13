@@ -19,6 +19,11 @@ class MemoryType(StrEnum):
     TOOL_PATTERN = "TOOL_PATTERN"
 
 
+class MemoryScope(StrEnum):
+    USER = "USER"
+    GLOBAL = "GLOBAL"
+
+
 @dataclass(slots=True)
 class MemoryRecord:
     id: str
@@ -28,6 +33,7 @@ class MemoryRecord:
     content: str
     normalized_content: str
     source: str
+    scope: MemoryScope = MemoryScope.USER
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     tool_name: str | None = None

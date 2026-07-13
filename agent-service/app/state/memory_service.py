@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.state.models import MemoryEvent, MemoryRecord, MemoryStatus, MemoryType
+from app.state.models import MemoryEvent, MemoryRecord, MemoryScope, MemoryStatus, MemoryType
 from app.state.repositories import StateRepository
 
 Embedder = Callable[[str], Sequence[float]]
@@ -16,6 +16,7 @@ _EXPLICIT_MEMORY = re.compile(
     r"(?:请)?(?:记住|记一下|以后(?:都)?按|之后(?:都)?按|默认按)\s*[:：,，]?\s*(.+)",
     re.IGNORECASE | re.DOTALL,
 )
+_GLOBAL_MEMORY = re.compile(r"(?:请)?全局记住\s*[:：,，]?\s*(.+)", re.IGNORECASE | re.DOTALL)
 _EMAIL = re.compile(r"(?<![\w.-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
 _PHONE = re.compile(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
@@ -98,6 +99,7 @@ class MemoryService:
         tool_args: dict[str, Any] | None = None,
         success: bool | None = None,
         metadata: dict[str, Any] | None = None,
+        scope: MemoryScope = MemoryScope.USER,
     ) -> MemoryRecord:
         clean = sanitize_memory_content(content)
         if not clean:
@@ -113,6 +115,7 @@ class MemoryService:
             raise ValueError("active memory limit reached for user")
         record = MemoryRecord(
             id=str(uuid.uuid4()), user_id=user_id, memory_type=memory_type,
+            scope=scope,
             status=MemoryStatus.CANDIDATE, content=clean,
             normalized_content=normalized, source=source,
             tool_name=tool_name, tool_args=_sanitize_value(tool_args), success=success,
@@ -126,8 +129,18 @@ class MemoryService:
         return stored
 
     async def extract_explicit_candidate(
-        self, user_id: str, instruction: str
+        self, user_id: str, instruction: str, *, allow_global: bool = False
     ) -> MemoryRecord | None:
+        global_match = _GLOBAL_MEMORY.search(instruction)
+        if global_match:
+            if not allow_global:
+                raise PermissionError("only admins can create global memory candidates")
+            return await self.create_candidate(
+                user_id,
+                global_match.group(1),
+                MemoryType.BUSINESS_TERM,
+                scope=MemoryScope.GLOBAL,
+            )
         match = _EXPLICIT_MEMORY.search(instruction)
         if not match:
             return None
@@ -166,8 +179,10 @@ class MemoryService:
     ) -> list[tuple[float, MemoryRecord]]:
         clean_query = sanitize_memory_content(query)
         query_embedding = self._embedding(clean_query)
-        memories = await self.repository.list_memories(user_id, {MemoryStatus.CONFIRMED})
-        ranked: list[tuple[float, MemoryRecord]] = []
+        memories = await self.repository.list_memories(
+            user_id, {MemoryStatus.CONFIRMED}, include_global=True
+        )
+        candidates: list[tuple[MemoryRecord, float, float]] = []
         for memory in memories:
             if memory_type and memory.memory_type != memory_type:
                 continue
@@ -175,11 +190,34 @@ class MemoryService:
                 continue
             keyword = _keyword_similarity(clean_query, memory.content)
             vector = _cosine(query_embedding, memory.embedding)
-            score = max(keyword, vector, (keyword + vector) / 2 if vector else keyword)
-            if score >= similarity_threshold:
-                ranked.append((score, memory))
-        ranked.sort(key=lambda item: (item[0], item[1].updated_at), reverse=True)
-        return ranked[: max(0, limit)]
+            candidates.append((memory, keyword, vector))
+
+        keyword_rank = {
+            item[0].id: rank
+            for rank, item in enumerate(
+                sorted(candidates, key=lambda item: (item[1], item[0].updated_at), reverse=True),
+                1,
+            )
+        }
+        vector_rank = {
+            item[0].id: rank
+            for rank, item in enumerate(
+                sorted(candidates, key=lambda item: (item[2], item[0].updated_at), reverse=True),
+                1,
+            )
+            if query_embedding is not None
+        }
+        ranked: list[tuple[float, float, MemoryRecord]] = []
+        for memory, keyword, vector in candidates:
+            similarity = max(keyword, vector, (keyword + vector) / 2 if vector else keyword)
+            if similarity < similarity_threshold:
+                continue
+            rrf = 1 / (60 + keyword_rank[memory.id])
+            if memory.id in vector_rank:
+                rrf += 1 / (60 + vector_rank[memory.id])
+            ranked.append((rrf, similarity, memory))
+        ranked.sort(key=lambda item: (item[0], item[1], item[2].updated_at), reverse=True)
+        return [(similarity, memory) for _, similarity, memory in ranked[: max(0, limit)]]
 
     async def create_tool_candidate(
         self, user_id: str, question: str, tool_name: str, args: dict[str, Any],

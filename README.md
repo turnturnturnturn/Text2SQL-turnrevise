@@ -28,6 +28,9 @@ PostgreSQL          business-service (Spring Boot)
 - 每次写操作先生成待审批记录，确认令牌绑定用户、操作内容、数据版本和 5 分钟有效期。
 - 确认按钮发送确定性命令，由 WorkflowHandler 截获，不交给 LLM 决策。
 - Vanna 工具访问、SQL 调用、结果、耗时及原始指令哈希统一写入 `audit_events`；默认审计不可用时拒绝执行。
+- `RequestHarness` 为每次请求提供统一 `run_id`、状态机、120 秒总预算、8 次工具上限和 2 次只读纠错上限。
+- 会话、运行轨迹和长期记忆写入独立 `agent_state` Schema；该账号没有业务表读写权限。
+- “记住/以后按……”只生成候选卡片，用户确认后才会作为不可信参考上下文参与召回。
 
 ## 目录
 
@@ -37,6 +40,8 @@ PostgreSQL          business-service (Spring Boot)
 - `compose.yaml`：PostgreSQL 和两个服务的一键编排。
 - `evaluation`：60 条中文标准题集与自动化质量报告。
 - `docs/TEXT2SQL_RESEARCH_NOTES.md`：最新 Text2SQL 研究映射、已落地优化及后续路线。
+- `docs/architecture/HARNESS_AND_MEMORY.md`：Harness、上下文编译、持久记忆和管理接口。
+- `AGENTS.md`：Codex worktree 协作、安全不变量与统一完成标准。
 
 ## 本地要求
 
@@ -52,6 +57,12 @@ PostgreSQL          business-service (Spring Boot)
 cp .env.example .env
 # 编辑 .env，至少设置 JWT_SECRET、INTERNAL_SERVICE_TOKEN 和 OPENAI_API_KEY
 docker compose up --build
+```
+
+已有数据卷升级时先运行幂等迁移：
+
+```bash
+./scripts/apply-knowledge-migration.sh
 ```
 
 服务地址：
@@ -178,7 +189,7 @@ cd agent-service
   --database-url 'postgresql://copilot_readonly:copilot_readonly_dev@localhost:5432/enterprise_copilot'
 ```
 
-脚本比较关键词基线与 BGE 中文向量 + RRF 混合检索，并将本次实际运行的 Recall@3、Recall@5、MRR、静态安全拦截率、Oracle SQL 执行成功率和完整结果等价率输出到 `evaluation/reports/`。增加 `--live-agent` 后，还会通过真实 SSE 接口分别评测本地 Qwen 的 SQL 执行、结果等价、危险请求无执行和审计哈希关联率。已有数据库 volume 先执行 `./scripts/apply-knowledge-migration.sh`；该迁移仅补充知识卡片。详情参见 [评测说明](evaluation/README.md) 和 [作品集说明](PORTFOLIO.md)。
+脚本比较关键词基线与 BGE 中文向量 + RRF 混合检索，并将本次实际运行的 Recall@3、Recall@5、MRR、静态安全拦截率、Oracle SQL 执行成功率和完整结果等价率输出到 `evaluation/reports/`。增加 `--live-agent` 后，还会通过真实 SSE 接口分别评测本地 Qwen 的 SQL 执行、结果等价、危险请求无执行和审计哈希关联率；`--harness-input` 可追加运行完成率、纠错率、Memory Recall@5、延迟和失败分类。详情参见 [评测说明](evaluation/README.md) 和 [作品集说明](PORTFOLIO.md)。
 
 Agent Docker 镜像显式安装 PyTorch ARM64 CPU wheel，不包含 CUDA/NVIDIA 运行库；Apple Metal 仅由宿主机 MLX 使用。
 
@@ -194,6 +205,6 @@ Agent Docker 镜像显式安装 PyTorch ARM64 CPU wheel，不包含 CUDA/NVIDIA 
 
 - 替换全部开发密码和 HS256 密钥，推荐改为非对称 JWT。
 - 将只读角色创建移出初始化 SQL，交由密钥管理和数据库运维系统维护。
-- 将内存会话/Agent Memory 替换为 PostgreSQL/pgvector 持久化。
+- 根据数据规模评估 pgvector；当前小规模记忆使用 PostgreSQL `REAL[]` 与 Agent 内 RRF。
 - 在反向代理上配置 TLS、限流、SSE 超时和安全响应头。
 - 将演示登录壳替换为正式身份提供方，并自托管或锁定前端组件资源。

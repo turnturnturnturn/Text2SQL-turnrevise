@@ -17,7 +17,7 @@ RECEIVED -> CONTEXT_READY -> MODEL_RUNNING <-> TOOL_RUNNING
 
 ## 上下文编译
 
-编译顺序固定为：系统安全规则、当前请求与角色、最近 6 轮对话、会话摘要、已确认用户记忆、Schema/指标/SQL 知识。会话超过 12 条消息后产生不超过约 1200 tokens 的滚动摘要。
+编译顺序固定为：系统安全规则、当前请求与角色、最近 6 轮对话、早期会话摘录、已确认用户记忆、Schema/指标/SQL 知识。会话超过 6 个用户轮次后，运行时生成不超过 1200 字符的抽取式早期摘录；原始会话仍持久化，后续可替换为模型摘要而不改变存储接口。
 
 摘要、记忆与检索文档作为不可信参考数据包装，不能改变系统 Prompt、角色、工具白名单或审批规则。模型上下文不保存密钥或未脱敏工具输出。
 
@@ -25,11 +25,11 @@ RECEIVED -> CONTEXT_READY -> MODEL_RUNNING <-> TOOL_RUNNING
 
 PostgreSQL 的 `agent_state` Schema 保存：
 
-- `conversations` / `messages`：用户归属、消息和滚动摘要；
+- `conversations` / `messages`：用户归属和完整消息；
 - `agent_runs` / `run_steps`：状态、预算、模型、检索模式、失败类型和耗时；
 - `memories` / `memory_events`：类型、状态、来源、向量、版本与确认/拒绝/删除事件。
 
-记忆类型为 `USER_PREFERENCE`、`BUSINESS_TERM`、`VERIFIED_QUERY` 和 `TOOL_PATTERN`。候选记忆仅由明确的“记住”请求、可重复的成功纠错或用户主动保存产生；只有 `CONFIRMED` 状态参与召回。用户记忆严格按 `user_id` 隔离，全局业务记忆仅管理员可确认。
+记忆类型为 `USER_PREFERENCE`、`BUSINESS_TERM`、`VERIFIED_QUERY` 和 `TOOL_PATTERN`。候选记忆由明确的“记住/以后按”请求或工具记忆接口产生；只有 `CONFIRMED` 状态参与召回。用户记忆严格按 `user_id` 隔离；管理员可以用“全局记住”创建 `GLOBAL` 业务术语候选，普通用户不能创建或确认全局候选。
 
 召回复用 BGE 的关键词、余弦相似度与 RRF，默认 Top-5。每个用户最多 500 条有效记忆，90 天未使用过期。清洗层拒绝 JWT、密码、手机号、邮箱、原始查询结果行和未脱敏工具输出。
 

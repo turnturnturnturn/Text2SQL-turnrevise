@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+from dataclasses import asdict
+
+from fastapi import APIRouter, Header, HTTPException, Response, status
+
+from app.harness.store import RunStore
+from app.security.jwt_resolver import JwtUserResolver
+from app.state.conversation_store import PostgresConversationStore
+from app.state.memory_service import MemoryService
+
+
+def create_state_router(
+    *,
+    resolver: JwtUserResolver,
+    memory_service: MemoryService,
+    conversation_store: PostgresConversationStore,
+    run_store: RunStore,
+) -> APIRouter:
+    router = APIRouter(prefix="/api", tags=["agent-state"])
+
+    def user_from_header(authorization: str | None):
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing Bearer token")
+        try:
+            return resolver.resolve_token(authorization.removeprefix("Bearer ").strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    @router.get("/memories")
+    async def list_memories(authorization: str | None = Header(default=None)):
+        user = user_from_header(authorization)
+        memories = await memory_service.list_for_user(str(user.id))
+        return [asdict(memory) for memory in memories]
+
+    async def set_memory_status(memory_id: str, authorization: str | None, action: str):
+        user = user_from_header(authorization)
+        method = memory_service.confirm if action == "confirm" else memory_service.reject
+        memory = await method(str(user.id), memory_id)
+        if memory is None:
+            raise HTTPException(status_code=404, detail="Memory not found")
+        return asdict(memory)
+
+    @router.post("/memories/{memory_id}/confirm")
+    async def confirm_memory(memory_id: str, authorization: str | None = Header(default=None)):
+        return await set_memory_status(memory_id, authorization, "confirm")
+
+    @router.post("/memories/{memory_id}/reject")
+    async def reject_memory(memory_id: str, authorization: str | None = Header(default=None)):
+        return await set_memory_status(memory_id, authorization, "reject")
+
+    @router.delete("/memories/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_memory(memory_id: str, authorization: str | None = Header(default=None)):
+        user = user_from_header(authorization)
+        if not await memory_service.delete(str(user.id), memory_id):
+            raise HTTPException(status_code=404, detail="Memory not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_conversation(
+        conversation_id: str, authorization: str | None = Header(default=None)
+    ):
+        user = user_from_header(authorization)
+        if not await conversation_store.delete_conversation(conversation_id, user):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.get("/runs/{run_id}")
+    async def get_run(run_id: str, authorization: str | None = Header(default=None)):
+        user = user_from_header(authorization)
+        run = await run_store.get(run_id)
+        if run is None or run.user_id != str(user.id):
+            raise HTTPException(status_code=404, detail="Run not found")
+        steps = await run_store.list_steps(run_id)
+        return {"run": asdict(run), "steps": [asdict(step) for step in steps]}
+
+    return router

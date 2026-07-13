@@ -105,6 +105,7 @@ class AuditedAgent(Agent):
         conversation_id: str | None = None,
     ) -> AsyncGenerator[UiComponent, None]:
         user = await self.user_resolver.resolve_user(request_context)
+        parent_send_message = super()._send_message
 
         async def operation(_run):
             instruction_hash = get_instruction_hash()
@@ -125,7 +126,7 @@ class AuditedAgent(Agent):
                     },
                 )
             )
-            async for component in super()._send_message(
+            async for component in parent_send_message(
                 request_context, message, conversation_id=conversation_id
             ):
                 yield component

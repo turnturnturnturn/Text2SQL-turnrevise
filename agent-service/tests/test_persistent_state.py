@@ -10,7 +10,7 @@ from app.state import (
     PostgresConversationStore,
     sanitize_memory_content,
 )
-from app.state.models import MemoryStatus
+from app.state.models import MemoryScope, MemoryStatus
 
 
 def context(user_id: str):
@@ -47,6 +47,22 @@ async def test_conversation_update_cannot_take_over_another_users_id():
     forged.id = "same-id"
     with pytest.raises(PermissionError, match="another user"):
         await store.update_conversation(forged)
+
+
+@pytest.mark.asyncio
+async def test_update_upserts_new_conversation_like_vanna_agent():
+    repository = InMemoryStateRepository()
+    store = PostgresConversationStore(repository)
+    alice = User(id="00000000-0000-0000-0000-000000000001")
+    from vanna.core.storage import Conversation, Message
+
+    conversation = Conversation(
+        id="new-from-agent", user=alice, messages=[Message(role="user", content="hello")]
+    )
+    await store.update_conversation(conversation)
+    restored = await store.get_conversation("new-from-agent", alice)
+    assert restored is not None
+    assert restored.messages[0].content == "hello"
 
 
 def test_memory_sanitizer_removes_pii_and_secrets():
@@ -145,3 +161,21 @@ async def test_vanna_agent_memory_reads_only_confirmed_records():
     )
     assert matches[0].memory.tool_name == "safe_read_sql"
     assert matches[0].memory.args == {"sql": "SELECT 1"}
+
+
+@pytest.mark.asyncio
+async def test_confirmed_global_business_memory_is_recalled_across_users():
+    repository = InMemoryStateRepository()
+    service = MemoryService(repository)
+    global_memory = await service.extract_explicit_candidate(
+        "admin", "全局记住：GMV 只统计已支付订单", allow_global=True
+    )
+    assert global_memory.scope == MemoryScope.GLOBAL
+    await service.confirm("admin", global_memory.id)
+    matches = await service.search_confirmed("alice", "GMV 已支付", similarity_threshold=0)
+    assert [memory.id for _, memory in matches] == [global_memory.id]
+
+    with pytest.raises(PermissionError, match="only admins"):
+        await service.extract_explicit_candidate(
+            "alice", "全局记住：退款额包括失败退款", allow_global=False
+        )

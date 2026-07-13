@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS agent_state.messages (
 
 CREATE TABLE IF NOT EXISTS agent_state.agent_runs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    conversation_id VARCHAR(128) REFERENCES agent_state.conversations(id) ON DELETE SET NULL,
+    conversation_id VARCHAR(128),
     user_id UUID NOT NULL REFERENCES public.app_users(id) ON DELETE CASCADE,
     request_id VARCHAR(128) NOT NULL UNIQUE,
     status VARCHAR(24) NOT NULL CHECK (status IN
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS agent_state.agent_runs (
     model_name VARCHAR(160),
     retrieval_mode VARCHAR(32),
     retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+    tool_call_count INTEGER NOT NULL DEFAULT 0 CHECK (tool_call_count >= 0),
     failure_type VARCHAR(64),
     failure_detail TEXT,
     metadata JSONB NOT NULL DEFAULT '{}',
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS agent_state.run_steps (
 CREATE TABLE IF NOT EXISTS agent_state.memories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES public.app_users(id) ON DELETE CASCADE,
+    scope VARCHAR(12) NOT NULL DEFAULT 'USER' CHECK (scope IN ('USER','GLOBAL')),
     memory_type VARCHAR(32) NOT NULL CHECK (memory_type IN
         ('USER_PREFERENCE','BUSINESS_TERM','VERIFIED_QUERY','TOOL_PATTERN')),
     status VARCHAR(16) NOT NULL DEFAULT 'candidate' CHECK (status IN
@@ -113,6 +115,36 @@ BEGIN
     END IF;
 END $$;
 
+-- Existing local volumes may have been migrated by an earlier draft.
+ALTER TABLE agent_state.agent_runs
+    ADD COLUMN IF NOT EXISTS tool_call_count INTEGER NOT NULL DEFAULT 0
+    CHECK (tool_call_count >= 0);
+
+ALTER TABLE agent_state.memories
+    ADD COLUMN IF NOT EXISTS scope VARCHAR(12) NOT NULL DEFAULT 'USER'
+    CHECK (scope IN ('USER','GLOBAL'));
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runs_active_conversation
+    ON agent_state.agent_runs(conversation_id)
+    WHERE conversation_id IS NOT NULL
+      AND status NOT IN ('COMPLETED','FAILED','CANCELLED');
+CREATE INDEX IF NOT EXISTS idx_agent_memories_scope_status_updated
+    ON agent_state.memories(scope, status, updated_at DESC);
+
+DO $$
+DECLARE
+    constraint_name TEXT;
+BEGIN
+    SELECT conname INTO constraint_name
+    FROM pg_constraint
+    WHERE conrelid = 'agent_state.agent_runs'::regclass
+      AND contype = 'f'
+      AND pg_get_constraintdef(oid) LIKE '%conversation_id%';
+    IF constraint_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE agent_state.agent_runs DROP CONSTRAINT %I', constraint_name);
+    END IF;
+END $$;
+
 GRANT CONNECT ON DATABASE enterprise_copilot TO copilot_agent_state;
 GRANT USAGE ON SCHEMA agent_state TO copilot_agent_state;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA agent_state
@@ -125,3 +157,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA agent_state
 REVOKE ALL ON SCHEMA public FROM copilot_agent_state;
 GRANT USAGE ON SCHEMA public TO copilot_agent_state;
 GRANT SELECT (id) ON public.app_users TO copilot_agent_state;
+
+\if :{?agent_state_password}
+SELECT format('ALTER ROLE copilot_agent_state PASSWORD %L', :'agent_state_password') \gexec
+\endif

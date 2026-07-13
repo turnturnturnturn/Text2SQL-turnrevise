@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -126,6 +127,27 @@ def _default_embedder_loader(model_name: str) -> Any:
         return SentenceTransformer(model_name, local_files_only=True)
     except OSError:
         return SentenceTransformer(model_name)
+
+
+class LazySentenceEmbedder:
+    """One lazily loaded BGE instance shared by schema and memory retrieval."""
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self._model: Any | None = None
+        self._lock = threading.Lock()
+
+    def _get_model(self) -> Any:
+        if self._model is None:
+            with self._lock:
+                if self._model is None:
+                    self._model = _default_embedder_loader(self.model_name)
+        return self._model
+
+    def encode(self, texts, normalize_embeddings: bool = True):
+        return self._get_model().encode(
+            texts, normalize_embeddings=normalize_embeddings
+        )
 
 
 class HybridKnowledgeRetriever:

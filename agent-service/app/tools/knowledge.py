@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Type
+from typing import Any, Callable, Type
 
 from pydantic import BaseModel, Field
 from vanna.components import CardComponent, SimpleTextComponent, UiComponent
@@ -33,12 +33,17 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
         retrieval_mode: str = "hybrid",
         embedding_model: str = "BAAI/bge-small-zh-v1.5",
         candidate_limit: int = 12,
+        embedder_loader: Callable[[str], Any] | None = None,
     ):
+        retriever_kwargs = {}
+        if embedder_loader is not None:
+            retriever_kwargs["embedder_loader"] = embedder_loader
         self.retriever = HybridKnowledgeRetriever(
             PostgresKnowledgeStore(connection_string),
             mode=retrieval_mode,
             embedding_model=embedding_model,
             candidate_limit=candidate_limit,
+            **retriever_kwargs,
         )
 
     @property

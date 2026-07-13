@@ -8,7 +8,7 @@ from typing import Any, Protocol
 import psycopg
 from psycopg.rows import dict_row
 
-from app.state.models import MemoryEvent, MemoryRecord, MemoryStatus, MemoryType
+from app.state.models import MemoryEvent, MemoryRecord, MemoryScope, MemoryStatus, MemoryType
 
 
 class StateRepository(Protocol):
@@ -19,7 +19,7 @@ class StateRepository(Protocol):
     async def list_conversations(self, user_id: str, limit: int, offset: int) -> list[dict[str, Any]]: ...
     async def upsert_memory(self, memory: MemoryRecord) -> MemoryRecord: ...
     async def get_memory(self, memory_id: str, user_id: str) -> MemoryRecord | None: ...
-    async def list_memories(self, user_id: str, statuses: set[MemoryStatus] | None = None) -> list[MemoryRecord]: ...
+    async def list_memories(self, user_id: str, statuses: set[MemoryStatus] | None = None, *, include_global: bool = False) -> list[MemoryRecord]: ...
     async def set_memory_status(self, memory_id: str, user_id: str, status: MemoryStatus) -> MemoryRecord | None: ...
     async def delete_memory(self, memory_id: str, user_id: str) -> bool: ...
     async def add_memory_event(self, event: MemoryEvent) -> None: ...
@@ -44,7 +44,7 @@ class InMemoryStateRepository:
 
     async def save_conversation(self, payload: dict[str, Any]) -> None:
         current = self.conversations.get(payload["id"])
-        if not current or current["user"]["id"] != payload["user"]["id"]:
+        if current and current["user"]["id"] != payload["user"]["id"]:
             raise PermissionError("conversation not found or belongs to another user")
         self.conversations[payload["id"]] = deepcopy(payload)
 
@@ -73,9 +73,9 @@ class InMemoryStateRepository:
         value = self.memories.get(memory_id)
         return deepcopy(value) if value and value.user_id == user_id else None
 
-    async def list_memories(self, user_id: str, statuses: set[MemoryStatus] | None = None) -> list[MemoryRecord]:
+    async def list_memories(self, user_id: str, statuses: set[MemoryStatus] | None = None, *, include_global: bool = False) -> list[MemoryRecord]:
         now = datetime.now(timezone.utc)
-        values = [m for m in self.memories.values() if m.user_id == user_id
+        values = [m for m in self.memories.values() if (m.user_id == user_id or (include_global and m.scope == MemoryScope.GLOBAL))
                   and (statuses is None or m.status in statuses)
                   and (m.expires_at is None or m.expires_at > now)]
         values.sort(key=lambda m: m.updated_at, reverse=True)
@@ -142,14 +142,25 @@ class PostgresStateRepository:
     async def save_conversation(self, payload: dict[str, Any]) -> None:
         async with await self._connect() as conn:
             async with conn.transaction():
-                result = await conn.execute(
-                    """UPDATE agent_state.conversations SET metadata=%s::jsonb, updated_at=%s
-                       WHERE id=%s AND user_id=%s""",
-                    (json.dumps(payload.get("metadata", {})), payload["updated_at"],
-                     payload["id"], payload["user"]["id"]),
-                )
-                if result.rowcount != 1:
+                existing = await (await conn.execute(
+                    "SELECT user_id FROM agent_state.conversations WHERE id=%s FOR UPDATE",
+                    (payload["id"],),
+                )).fetchone()
+                if existing and str(existing["user_id"]) != str(payload["user"]["id"]):
                     raise PermissionError("conversation not found or belongs to another user")
+                await conn.execute(
+                    """INSERT INTO agent_state.conversations
+                       (id,user_id,user_snapshot,metadata,created_at,updated_at)
+                       VALUES (%s,%s,%s::jsonb,%s::jsonb,%s,%s)
+                       ON CONFLICT (id) DO UPDATE SET
+                         user_snapshot=EXCLUDED.user_snapshot,
+                         metadata=EXCLUDED.metadata,
+                         updated_at=EXCLUDED.updated_at
+                       WHERE agent_state.conversations.user_id=EXCLUDED.user_id""",
+                    (payload["id"], payload["user"]["id"], json.dumps(payload["user"]),
+                     json.dumps(payload.get("metadata", {})), payload["created_at"],
+                     payload["updated_at"]),
+                )
                 await conn.execute("DELETE FROM agent_state.messages WHERE conversation_id=%s", (payload["id"],))
                 await self._replace_messages(conn, payload)
 
@@ -187,6 +198,7 @@ class PostgresStateRepository:
     def _memory(row: dict[str, Any]) -> MemoryRecord:
         return MemoryRecord(
             id=str(row["id"]), user_id=str(row["user_id"]), memory_type=MemoryType(row["memory_type"]),
+            scope=MemoryScope(row["scope"]),
             status=MemoryStatus(row["status"]), content=row["content"], normalized_content=row["normalized_content"],
             source=row["source"], created_at=row["created_at"], updated_at=row["updated_at"],
             tool_name=row["tool_name"], tool_args=row["tool_args"], success=row["success"],
@@ -198,11 +210,11 @@ class PostgresStateRepository:
         async with await self._connect() as conn:
             row = await (await conn.execute(
                 """INSERT INTO agent_state.memories
-                   (id,user_id,memory_type,status,content,normalized_content,source,tool_name,tool_args,success,embedding,metadata,expires_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb,%s)
+                   (id,user_id,scope,memory_type,status,content,normalized_content,source,tool_name,tool_args,success,embedding,metadata,expires_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb,%s)
                    ON CONFLICT (user_id,memory_type,normalized_content) DO UPDATE SET updated_at=now()
                    RETURNING *""",
-                (memory.id, memory.user_id, memory.memory_type.value, memory.status.value, memory.content,
+                (memory.id, memory.user_id, memory.scope.value, memory.memory_type.value, memory.status.value, memory.content,
                  memory.normalized_content, memory.source, memory.tool_name,
                  json.dumps(memory.tool_args) if memory.tool_args is not None else None,
                  memory.success, memory.embedding, json.dumps(memory.metadata), memory.expires_at),
@@ -216,9 +228,12 @@ class PostgresStateRepository:
             )).fetchone()
         return self._memory(row) if row else None
 
-    async def list_memories(self, user_id: str, statuses: set[MemoryStatus] | None = None) -> list[MemoryRecord]:
+    async def list_memories(self, user_id: str, statuses: set[MemoryStatus] | None = None, *, include_global: bool = False) -> list[MemoryRecord]:
         params: list[Any] = [user_id]
-        sql = "SELECT * FROM agent_state.memories WHERE user_id=%s"
+        sql = "SELECT * FROM agent_state.memories WHERE (user_id=%s"
+        if include_global:
+            sql += " OR scope='GLOBAL'"
+        sql += ")"
         if statuses:
             sql += " AND status = ANY(%s)"
             params.append([s.value for s in statuses])
