@@ -18,6 +18,10 @@ class JwtUserResolver(UserResolver):
         if not header or not header.startswith("Bearer "):
             raise ValueError("Missing Bearer token")
         token = header.removeprefix("Bearer ").strip()
+        return self.resolve_token(token)
+
+    def resolve_token(self, token: str) -> User:
+        """Resolve a raw token for authenticated management endpoints."""
         try:
             claims = jwt.decode(
                 token,
@@ -38,4 +42,3 @@ class JwtUserResolver(UserResolver):
             group_memberships=[role],
             metadata={"role": role},
         )
-

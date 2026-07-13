@@ -5,6 +5,7 @@ services:
       POSTGRES_DB: enterprise_copilot
       POSTGRES_USER: ${POSTGRES_ADMIN_USER:-copilot_admin}
       POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-copilot_admin_dev}
+      AGENT_STATE_PASSWORD: ${AGENT_STATE_PASSWORD:-copilot_agent_state_dev}
     ports:
       - "5432:5432"
     volumes:
@@ -35,6 +36,7 @@ services:
     build: ./agent-service
     environment:
       DATABASE_URL: postgresql://copilot_readonly:copilot_readonly_dev@postgres:5432/enterprise_copilot
+      AGENT_STATE_DATABASE_URL: postgresql://copilot_agent_state:${AGENT_STATE_PASSWORD:-copilot_agent_state_dev}@postgres:5432/enterprise_copilot
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-before-use-123456}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token}
       BUSINESS_SERVICE_URL: http://business-service:8080
@@ -50,6 +52,12 @@ services:
       RETRIEVAL_MODE: ${RETRIEVAL_MODE:-hybrid}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
       RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-8}
+      HARNESS_MAX_TOOL_CALLS: ${HARNESS_MAX_TOOL_CALLS:-8}
+      HARNESS_MAX_RETRIES: ${HARNESS_MAX_RETRIES:-2}
+      HARNESS_TIMEOUT_SECONDS: ${HARNESS_TIMEOUT_SECONDS:-120}
+      MEMORY_TOP_K: ${MEMORY_TOP_K:-5}
+      MEMORY_MAX_PER_USER: ${MEMORY_MAX_PER_USER:-500}
+      MEMORY_RETENTION_DAYS: ${MEMORY_RETENTION_DAYS:-90}
       HF_HOME: /models
     ports:
       - "8000:8000"
