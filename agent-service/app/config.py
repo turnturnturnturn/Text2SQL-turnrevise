@@ -51,6 +51,9 @@ class Settings:
     memory_top_k: int = int(os.getenv("MEMORY_TOP_K", "5"))
     memory_max_per_user: int = int(os.getenv("MEMORY_MAX_PER_USER", "500"))
     memory_retention_days: int = int(os.getenv("MEMORY_RETENTION_DAYS", "90"))
+    conversation_retention_days: int = int(
+        os.getenv("CONVERSATION_RETENTION_DAYS", "90")
+    )
 
 
 settings = Settings()

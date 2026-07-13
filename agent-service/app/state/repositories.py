@@ -23,6 +23,7 @@ class StateRepository(Protocol):
     async def set_memory_status(self, memory_id: str, user_id: str, status: MemoryStatus) -> MemoryRecord | None: ...
     async def delete_memory(self, memory_id: str, user_id: str) -> bool: ...
     async def add_memory_event(self, event: MemoryEvent) -> None: ...
+    async def delete_expired_conversations(self, retention_days: int) -> int: ...
 
 
 class InMemoryStateRepository:
@@ -97,6 +98,23 @@ class InMemoryStateRepository:
 
     async def add_memory_event(self, event: MemoryEvent) -> None:
         self.memory_events.append(deepcopy(event))
+
+    async def delete_expired_conversations(self, retention_days: int) -> int:
+        if retention_days < 1:
+            raise ValueError("retention_days must be positive")
+        cutoff = datetime.now(timezone.utc).timestamp() - retention_days * 86400
+        expired = []
+        for key, value in self.conversations.items():
+            updated_at = value["updated_at"]
+            if not isinstance(updated_at, datetime):
+                updated_at = datetime.fromisoformat(str(updated_at))
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            if updated_at.timestamp() < cutoff:
+                expired.append(key)
+        for key in expired:
+            del self.conversations[key]
+        return len(expired)
 
 
 class PostgresStateRepository:
@@ -262,3 +280,14 @@ class PostgresStateRepository:
                    VALUES (%s,%s,%s,%s::jsonb)""",
                 (event.memory_id, event.user_id, event.event_type, json.dumps(event.details)),
             )
+
+    async def delete_expired_conversations(self, retention_days: int) -> int:
+        if retention_days < 1:
+            raise ValueError("retention_days must be positive")
+        async with await self._connect() as conn:
+            result = await conn.execute(
+                """DELETE FROM agent_state.conversations
+                   WHERE updated_at < now() - (%s * interval '1 day')""",
+                (retention_days,),
+            )
+            return result.rowcount

@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from vanna.core.user import User
@@ -63,6 +64,24 @@ async def test_update_upserts_new_conversation_like_vanna_agent():
     restored = await store.get_conversation("new-from-agent", alice)
     assert restored is not None
     assert restored.messages[0].content == "hello"
+
+
+@pytest.mark.asyncio
+async def test_conversation_retention_cleanup_removes_only_expired_rows():
+    repository = InMemoryStateRepository()
+    old = {
+        "id": "old",
+        "user": {"id": "alice"},
+        "messages": [],
+        "created_at": datetime.now(timezone.utc) - timedelta(days=100),
+        "updated_at": datetime.now(timezone.utc) - timedelta(days=100),
+        "metadata": {},
+    }
+    fresh = {**old, "id": "fresh", "updated_at": datetime.now(timezone.utc)}
+    await repository.create_conversation(old)
+    await repository.create_conversation(fresh)
+    assert await repository.delete_expired_conversations(90) == 1
+    assert set(repository.conversations) == {"fresh"}
 
 
 def test_memory_sanitizer_removes_pii_and_secrets():

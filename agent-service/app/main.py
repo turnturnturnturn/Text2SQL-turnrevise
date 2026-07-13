@@ -156,6 +156,9 @@ app.include_router(
 @app.on_event("startup")
 async def recover_interrupted_harness_runs() -> None:
     await request_harness.fail_incomplete_runs()
+    await state_repository.delete_expired_conversations(
+        settings.conversation_retention_days
+    )
 
 
 @app.get("/app", response_class=HTMLResponse)
