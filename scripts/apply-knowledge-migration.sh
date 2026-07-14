@@ -20,3 +20,7 @@ fi
   -d enterprise_copilot \
   --set="agent_state_password=${AGENT_STATE_PASSWORD:-copilot_agent_state_dev}" \
   -f /migrations/002_agent_state.sql
+
+"$ROOT/scripts/docker-compose.sh" exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U "${POSTGRES_ADMIN_USER:-copilot_admin}" \
+  -d enterprise_copilot -f /migrations/003_semantic_catalog.sql

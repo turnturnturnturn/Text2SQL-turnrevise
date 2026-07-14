@@ -15,6 +15,9 @@ echo "[verify] Python tests"
   "$PYTHON" -m pytest
 )
 
+echo "[verify] Gold-memory retrieval suite"
+"$PYTHON" "$ROOT/scripts/evaluate_memory.py" --check
+
 echo "[verify] Java tests"
 if [[ -x "$ROOT/business-service/mvnw" ]]; then
   (cd "$ROOT/business-service" && ./mvnw test)

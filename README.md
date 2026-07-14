@@ -39,6 +39,7 @@ PostgreSQL          business-service (Spring Boot)
 - `database/init`：电商样例 Schema、数据、指标口径与只读角色。
 - `compose.yaml`：PostgreSQL 和两个服务的一键编排。
 - `evaluation`：60 条中文标准题集与自动化质量报告。
+- `evaluation/memory_cases.json`：30 条 gold memory、错误记忆和隔离场景专项题集。
 - `docs/TEXT2SQL_RESEARCH_NOTES.md`：最新 Text2SQL 研究映射、已落地优化及后续路线。
 - `docs/architecture/HARNESS_AND_MEMORY.md`：Harness、上下文编译、持久记忆和管理接口。
 - `AGENTS.md`：Codex worktree 协作、安全不变量与统一完成标准。
@@ -64,6 +65,8 @@ docker compose up --build
 ```bash
 ./scripts/apply-knowledge-migration.sh
 ```
+
+该命令还会创建只读 `semantic_catalog`，把现有 Schema、指标和验证 SQL 映射为带版本、来源哈希、信任级别和敏感度的统一语义资产，并导入人工维护的低基数状态值。当前线上检索仍使用原表；后续 Schema/Value Linking 将通过 feature flag 切换。
 
 服务地址：
 

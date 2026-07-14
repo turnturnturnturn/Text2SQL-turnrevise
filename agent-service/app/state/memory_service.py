@@ -34,12 +34,13 @@ def sanitize_memory_content(content: str) -> str:
     return " ".join(value.split()).strip()
 
 
-def _normalize(content: str) -> str:
+def normalize_memory_content(content: str) -> str:
+    """Return the stable normalized form used for memory deduplication."""
     return re.sub(r"[\W_]+", "", content, flags=re.UNICODE).lower()
 
 
 def _tokens(content: str) -> set[str]:
-    compact = _normalize(content)
+    compact = normalize_memory_content(content)
     words = set(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", content.lower()))
     words.update(compact[index : index + 2] for index in range(max(0, len(compact) - 1)))
     return {token for token in words if token}
@@ -104,7 +105,7 @@ class MemoryService:
         clean = sanitize_memory_content(content)
         if not clean:
             raise ValueError("memory content is empty after sanitization")
-        normalized = _normalize(clean)
+        normalized = normalize_memory_content(clean)
         existing = await self.repository.list_memories(user_id)
         duplicate = next(
             (item for item in existing if item.memory_type == memory_type

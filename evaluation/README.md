@@ -32,6 +32,29 @@ EVAL_AUDIT_DATABASE_URL='postgresql://管理员:密码@localhost:5432/enterprise
 
 报告写入 `evaluation/reports/`，该目录被 Git 忽略，避免把一次运行的指标误当作固定结论提交。
 
+## Memory 专项评测集
+
+`memory_cases.json` 固定包含 30 条带 gold memory id 的中文题目，并在同一题集中放入：
+
+- 正常的用户记忆与管理员确认的 GLOBAL 业务术语；
+- 内容相近但业务含义错误的 confirmed 记忆，用于测量错误记忆暴露率；
+- candidate、rejected、expired 和其他用户记忆，用于测量不合格记忆暴露率。
+
+专项脚本直接调用生产 `MemoryService.search_confirmed` 路径，不预写召回结果，也不依赖数据库或模型下载：
+
+```bash
+.venv/bin/python ../scripts/evaluate_memory.py --check
+```
+
+去掉 `--check` 会在 `evaluation/reports/` 生成逐题 JSON 和 Markdown 报告。当前指标定义：
+
+- Memory Recall@5：Top-5 是否命中至少一个 gold memory id；
+- 错误记忆暴露率：带 incorrect memory ids 的样本中，Top-5 命中错误 id 的比例；
+- 不合格记忆暴露率：candidate、rejected、expired 或跨用户 id 进入 Top-5 的比例；
+- 错误记忆采用率：只有真实 Agent 轨迹提供 `adopted_memory_ids` 时才计算，不能用“被召回”冒充“被采用”。
+
+`./scripts/verify-all.sh` 会自动运行该专项题集，并检查 Recall@5 与不合格记忆隔离门槛。
+
 ## Harness 指标
 
 如需在同一 JSON/Markdown 报告中聚合 Harness 与记忆指标，传入真实运行轨迹：
@@ -59,11 +82,12 @@ EVAL_AUDIT_DATABASE_URL='postgresql://管理员:密码@localhost:5432/enterprise
       "id": "memory-001",
       "gold_memory_ids": ["expected-id"],
       "retrieved_memory_ids": ["expected-id"],
-      "incorrect_memory_present": false,
-      "incorrect_memory_adopted": false
+      "incorrect_memory_ids": ["known-wrong-id"],
+      "ineligible_memory_ids": ["candidate-or-cross-user-id"],
+      "adopted_memory_ids": []
     }
   ]
 }
 ```
 
-纠错成功率只以 `correction_attempted=true` 的运行为分母；Memory Recall@5 只以声明 `gold_memory_ids` 的样本为分母；错误记忆采用率只以 `incorrect_memory_present=true` 的注入样本为分母。没有可用样本时指标为 `null`，不预设为 0% 或 100%。
+纠错成功率只以 `correction_attempted=true` 的运行为分母；Memory Recall@5 只以声明 `gold_memory_ids` 的样本为分母；错误记忆采用率只以同时提供错误 id 和真实 adopted id 的轨迹为分母。没有可用样本时指标为 `null`，不预设为 0% 或 100%。旧版 `incorrect_memory_present` / `incorrect_memory_adopted` 字段仍可读取，但新报告应优先使用可追溯 id。

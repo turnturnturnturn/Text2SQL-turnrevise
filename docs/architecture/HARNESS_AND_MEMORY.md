@@ -44,4 +44,4 @@ PostgreSQL 的 `agent_state` Schema 保存：
 - `DELETE /api/conversations/{id}`
 - `GET /api/runs/{id}`
 
-Harness 评测输入为真实运行轨迹，报告完成率、平均工具调用数、纠错成功率、Memory Recall@5、错误记忆采用率、平均延迟和失败分类。缺少分母时输出 `null`/“无可用样本”，不视为 0% 或 100%。
+Harness 评测输入为真实运行轨迹，报告完成率、平均工具调用数、纠错成功率、Memory Recall@5、错误记忆暴露率、不合格记忆暴露率、错误记忆采用率、平均延迟和失败分类。专项离线题集只测真实检索路径的召回与暴露；“采用率”只有 Agent 轨迹明确提供 adopted memory ids 时才计算。缺少分母时输出 `null`/“无可用样本”，不视为 0% 或 100%。

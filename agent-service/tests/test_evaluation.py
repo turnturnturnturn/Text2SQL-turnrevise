@@ -5,8 +5,11 @@ import pytest
 from app.evaluation import (
     aggregate_harness_metrics,
     compare_records,
+    evaluate_memory_suite,
     extract_dataframe_rows,
     harness_metrics_markdown,
+    memory_suite_markdown,
+    validate_memory_suite,
 )
 
 
@@ -80,6 +83,8 @@ def test_aggregate_harness_metrics_uses_explicit_denominators():
     assert metrics["correction_success_rate"] == 0.5
     assert metrics["memory_recall_at_5"] == 0.5
     assert metrics["incorrect_memory_adoption_rate"] == 0.5
+    assert metrics["incorrect_memory_exposure_rate"] is None
+    assert metrics["ineligible_memory_exposure_rate"] is None
     assert metrics["average_latency_ms"] == 300.0
     assert metrics["failure_counts"] == {"CANCELLED": 1, "TIMEOUT": 1}
     assert metrics["memory_details"][1]["retrieved_memory_ids"] == ["x", "y", "z", "q", "r"]
@@ -91,6 +96,8 @@ def test_aggregate_harness_metrics_keeps_unmeasured_values_null():
     assert metrics["average_tool_calls"] is None
     assert metrics["correction_success_rate"] is None
     assert metrics["memory_recall_at_5"] is None
+    assert metrics["incorrect_memory_exposure_rate"] is None
+    assert metrics["ineligible_memory_exposure_rate"] is None
     assert metrics["incorrect_memory_adoption_rate"] is None
     assert metrics["average_latency_ms"] is None
     assert "无可用样本" in "\n".join(harness_metrics_markdown(metrics))
@@ -101,12 +108,78 @@ def test_aggregate_harness_metrics_rejects_invalid_telemetry():
         aggregate_harness_metrics([{"status": "FAILED", "latency_ms": -1}], [])
     with pytest.raises(ValueError, match="correction_succeeded"):
         aggregate_harness_metrics([{"status": "FAILED", "correction_attempted": True}], [])
-    with pytest.raises(ValueError, match="incorrect_memory_adopted"):
+    with pytest.raises(ValueError, match="retrieved_memory_ids"):
         aggregate_harness_metrics(
             [],
-            [{"incorrect_memory_present": True, "gold_memory_ids": [], "retrieved_memory_ids": []}],
+            [{"gold_memory_ids": ["a"], "retrieved_memory_ids": "a"}],
         )
 
 
 def test_harness_metrics_markdown_does_not_claim_unrun_metrics():
     assert "未运行" in "\n".join(harness_metrics_markdown(None))
+
+
+def test_validate_memory_suite_rejects_unknown_fixture_ids():
+    with pytest.raises(ValueError, match="unknown ids"):
+        validate_memory_suite(
+            {
+                "suite_version": "test",
+                "memories": [
+                    {"id": "known", "user_id": "alice", "content": "已知记忆"}
+                ],
+                "cases": [
+                    {
+                        "id": "case",
+                        "user_id": "alice",
+                        "query": "问题",
+                        "gold_memory_ids": ["missing"],
+                    }
+                ],
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_memory_suite_uses_confirmed_scope_and_expiry_rules():
+    suite = {
+        "suite_version": "test",
+        "memories": [
+            {"id": "gold", "user_id": "alice", "content": "销售额默认按订单区域"},
+            {
+                "id": "wrong",
+                "user_id": "alice",
+                "content": "错误记忆销售额按客户区域",
+            },
+            {
+                "id": "candidate",
+                "user_id": "alice",
+                "status": "candidate",
+                "content": "候选记忆销售额按注册区域",
+            },
+            {
+                "id": "expired",
+                "user_id": "alice",
+                "expires_at": "2020-01-01T00:00:00+00:00",
+                "content": "过期记忆销售额按历史区域",
+            },
+            {"id": "other-user", "user_id": "bob", "content": "销售额按 Bob 区域"},
+        ],
+        "cases": [
+            {
+                "id": "case",
+                "user_id": "alice",
+                "query": "销售额默认按哪个区域",
+                "gold_memory_ids": ["gold"],
+                "incorrect_memory_ids": ["wrong"],
+                "ineligible_memory_ids": ["candidate", "expired", "other-user"],
+            }
+        ],
+    }
+
+    result = await evaluate_memory_suite(suite)
+    metrics = result["metrics"]
+    assert metrics["memory_recall_at_5"] == 1.0
+    assert metrics["ineligible_memory_exposure_rate"] == 0.0
+    assert set(result["cases"][0]["retrieved_memory_ids"]) <= {"gold", "wrong"}
+    assert metrics["incorrect_memory_adoption_rate"] is None
+    assert "错误记忆采用率：无可用样本" in memory_suite_markdown(result)
