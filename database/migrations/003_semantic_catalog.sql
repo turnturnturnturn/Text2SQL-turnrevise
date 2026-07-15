@@ -325,7 +325,7 @@ WITH curated_values(table_name, column_name, canonical_value, aliases) AS (
         ('orders', 'status', 'CANCELLED', ARRAY['已取消','取消']::TEXT[]),
         ('refunds', 'status', 'PENDING', ARRAY['退款处理中','待退款']::TEXT[]),
         ('refunds', 'status', 'SUCCESS', ARRAY['退款成功','已退款']::TEXT[]),
-        ('refunds', 'status', 'FAILED', ARRAY['退款失败']::TEXT[])
+        ('refunds', 'status', 'REJECTED', ARRAY['退款被拒绝','已拒绝']::TEXT[])
 )
 INSERT INTO semantic_catalog.value_dictionary AS target (
     tenant_id, value_id, column_asset_id, canonical_value, aliases,

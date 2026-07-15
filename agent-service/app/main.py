@@ -12,6 +12,13 @@ from app.db import SafePostgresRunner
 from app.harness import HarnessBudget, HarnessLifecycleHook, RequestHarness
 from app.prompt import CommerceSystemPromptBuilder
 from app.retrieval import LazySentenceEmbedder
+from app.grounding import (
+    BidirectionalGroundingLinker,
+    GroundingService,
+    PostgresQueryPlanStore,
+    PostgresSemanticCatalogStore,
+    QueryPlanValidator,
+)
 from app.security.jwt_resolver import JwtUserResolver
 from app.state import (
     MemoryContextEnhancer,
@@ -23,7 +30,12 @@ from app.state import (
     RecentConversationFilter,
 )
 from app.state.api import create_state_router
-from app.tools import PreviewBusinessActionTool, SafeReadSqlTool, SearchSchemaKnowledgeTool
+from app.tools import (
+    PreviewBusinessActionTool,
+    SafeReadSqlTool,
+    SearchSchemaKnowledgeTool,
+    ValidateQueryPlanTool,
+)
 from app.workflow import ActionWorkflowHandler
 from app.ui import login_shell
 
@@ -49,6 +61,12 @@ def create_llm():
 
 state_repository = PostgresStateRepository(settings.agent_state_database_url)
 shared_embedder = LazySentenceEmbedder(settings.embedding_model)
+semantic_catalog_store = PostgresSemanticCatalogStore(settings.database_url)
+grounding_service = GroundingService(
+    semantic_catalog_store,
+    BidirectionalGroundingLinker(embedder=shared_embedder),
+)
+query_plan_store = PostgresQueryPlanStore(settings.agent_state_database_url)
 memory_service = MemoryService(
     state_repository,
     embedder=lambda text: shared_embedder.encode(
@@ -88,13 +106,25 @@ def create_agent() -> Agent:
             embedding_model=settings.embedding_model,
             candidate_limit=max(settings.retrieval_top_k, 8),
             embedder_loader=lambda _model_name: shared_embedder,
+            grounding_service=grounding_service,
+            grounding_mode=settings.grounding_v2_mode,
         ),
         access_groups=["analyst", "operator", "admin"],
     )
+    if settings.grounding_v2_mode != "off":
+        registry.register_local_tool(
+            ValidateQueryPlanTool(
+                QueryPlanValidator(),
+                store=query_plan_store,
+                grounding_mode=settings.grounding_v2_mode,
+            ),
+            access_groups=["analyst", "operator", "admin"],
+        )
     registry.register_local_tool(
         SafeReadSqlTool(
             SafePostgresRunner(settings.database_url, settings.statement_timeout_ms),
             max_rows=settings.max_query_rows,
+            grounding_mode=settings.grounding_v2_mode,
         ),
         access_groups=["analyst", "operator", "admin"],
     )
@@ -114,7 +144,7 @@ def create_agent() -> Agent:
             temperature=0.1,
             max_tool_iterations=settings.harness_max_tool_calls,
         ),
-        system_prompt_builder=CommerceSystemPromptBuilder(),
+        system_prompt_builder=CommerceSystemPromptBuilder(settings.grounding_v2_mode),
         lifecycle_hooks=[HarnessLifecycleHook(run_store, harness_budget)],
         llm_context_enhancer=MemoryContextEnhancer(
             memory_service, top_k=settings.memory_top_k
@@ -149,6 +179,7 @@ app.include_router(
         memory_service=memory_service,
         conversation_store=conversation_store,
         run_store=run_store,
+        query_plan_store=query_plan_store,
     )
 )
 

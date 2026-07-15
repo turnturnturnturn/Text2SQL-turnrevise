@@ -4,6 +4,9 @@ import hashlib
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 
+from app.grounding.context import bind_grounding_context, reset_grounding_context
+from app.grounding.context import RequestGroundingState
+
 
 _run_id: ContextVar[str | None] = ContextVar("harness_run_id", default=None)
 _instruction_hash: ContextVar[str | None] = ContextVar(
@@ -19,6 +22,7 @@ class RequestContextTokens:
     run_id: Token[str | None]
     instruction_hash: Token[str | None]
     instruction_text: Token[str | None]
+    grounding_state: Token[RequestGroundingState | None]
 
 
 def bind_request_context(run_id: str, instruction: str) -> RequestContextTokens:
@@ -29,11 +33,13 @@ def bind_request_context(run_id: str, instruction: str) -> RequestContextTokens:
             hashlib.sha256(instruction.encode("utf-8")).hexdigest()
         ),
         instruction_text=_instruction_text.set(instruction),
+        grounding_state=bind_grounding_context(),
     )
 
 
 def reset_request_context(tokens: RequestContextTokens) -> None:
     # Context variables must be reset in reverse binding order.
+    reset_grounding_context(tokens.grounding_state)
     _instruction_text.reset(tokens.instruction_text)
     _instruction_hash.reset(tokens.instruction_hash)
     _run_id.reset(tokens.run_id)

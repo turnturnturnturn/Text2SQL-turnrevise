@@ -32,6 +32,16 @@ EVAL_AUDIT_DATABASE_URL='postgresql://管理员:密码@localhost:5432/enterprise
 
 报告写入 `evaluation/reports/`，该目录被 Git 忽略，避免把一次运行的指标误当作固定结论提交。
 
+## Grounding v2 专项评测
+
+`grounding_cases.json` 固定包含 25 条 Schema/Join Linking、20 条 Value Linking 正例和 3 条 Value 负例。冻结目录额外加入非目标表，避免“目录刚好只有五张表”导致 Recall@5 虚高；默认运行生产 `BidirectionalGroundingLinker` 的关键词降级路径，向量/RRF 路径由单元测试覆盖：
+
+```bash
+./scripts/evaluate_grounding.py --check
+```
+
+门槛为 Table Recall@5 ≥95%、Column Recall@10 ≥90%、Join Path Exact Match ≥85%、Value Recall@3 ≥90%，candidate Join 自动执行数与无关问题 Value 误召回数都必须为 0。传入 `--database-url` 可用实际 `semantic_catalog` 重跑相同题集；报告中的链接指标与模型 Text2SQL 指标严格分开。
+
 ## Memory 专项评测集
 
 `memory_cases.json` 固定包含 30 条带 gold memory id 的中文题目，并在同一题集中放入：

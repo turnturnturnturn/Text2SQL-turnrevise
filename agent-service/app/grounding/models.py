@@ -120,6 +120,11 @@ class SchemaRelation:
     join_expression: str | None = None
     trust_level: TrustLevel = TrustLevel.HIGH
     sensitivity: Sensitivity = Sensitivity.INTERNAL
+    left_nullable: bool | None = None
+    right_unique: bool | None = None
+    historical_success_count: int = 0
+    historical_failure_count: int = 0
+    last_verified_at: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -134,6 +139,8 @@ class SchemaRelation:
             raise ValueError("relation source provenance is invalid")
         if self.status == RelationStatus.CANDIDATE and self.trust_level == TrustLevel.HIGH:
             raise ValueError("candidate relations cannot have HIGH trust")
+        if self.historical_success_count < 0 or self.historical_failure_count < 0:
+            raise ValueError("relation history counts cannot be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,3 +170,81 @@ class ValueDictionaryEntry:
         if not self.source_uri.strip() or not _SHA256.fullmatch(self.source_hash):
             raise ValueError("value source provenance is invalid")
         _validate_effective_range(self.effective_from, self.effective_to)
+
+
+@dataclass(frozen=True, slots=True)
+class GroundingCandidate:
+    asset_id: str
+    score: float
+    source_hash: str
+    reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ValueCandidate:
+    value_id: str
+    column_asset_id: str
+    canonical_value: str
+    score: float
+    source_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class JoinPath:
+    path_id: str
+    relation_ids: tuple[str, ...]
+    table_asset_ids: tuple[str, ...]
+    score: float
+
+
+@dataclass(frozen=True, slots=True)
+class GroundingSnapshot:
+    query_hash: str
+    tenant_id: str
+    table_candidates: tuple[GroundingCandidate, ...]
+    column_candidates: tuple[GroundingCandidate, ...]
+    knowledge_candidates: tuple[GroundingCandidate, ...]
+    value_candidates: tuple[ValueCandidate, ...]
+    join_paths: tuple[JoinPath, ...]
+    evidence_ids: tuple[str, ...]
+    confidence: float
+    ambiguities: tuple[str, ...] = ()
+
+    def to_safe_dict(self) -> dict[str, Any]:
+        def candidate(item: GroundingCandidate) -> dict[str, Any]:
+            return {
+                "asset_id": item.asset_id,
+                "score": item.score,
+                "source_hash": item.source_hash,
+                "reasons": list(item.reasons),
+            }
+
+        return {
+            "query_hash": self.query_hash,
+            "tenant_id": self.tenant_id,
+            "table_candidates": [candidate(item) for item in self.table_candidates],
+            "column_candidates": [candidate(item) for item in self.column_candidates],
+            "knowledge_candidates": [candidate(item) for item in self.knowledge_candidates],
+            "value_candidates": [
+                {
+                    "value_id": item.value_id,
+                    "column_asset_id": item.column_asset_id,
+                    "canonical_value": item.canonical_value,
+                    "score": item.score,
+                    "source_hash": item.source_hash,
+                }
+                for item in self.value_candidates
+            ],
+            "join_paths": [
+                {
+                    "path_id": path.path_id,
+                    "relation_ids": list(path.relation_ids),
+                    "table_asset_ids": list(path.table_asset_ids),
+                    "score": path.score,
+                }
+                for path in self.join_paths
+            ],
+            "evidence_ids": list(self.evidence_ids),
+            "confidence": self.confidence,
+            "ambiguities": list(self.ambiguities),
+        }

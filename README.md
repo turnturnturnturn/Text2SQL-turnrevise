@@ -31,6 +31,8 @@ PostgreSQL          business-service (Spring Boot)
 - `RequestHarness` 为每次请求提供统一 `run_id`、状态机、120 秒总预算、8 次工具上限和 2 次只读纠错上限。
 - 会话、运行轨迹和长期记忆写入独立 `agent_state` Schema；该账号没有业务表读写权限。
 - “记住/以后按……”只生成候选卡片，用户确认后才会作为不可信参考上下文参与召回。
+- Grounding v2 从版本化目录执行双向 Schema Linking、confirmed Join 寻路和受控 Value Linking；Restricted 与候选关系不进入自动执行证据。
+- `enforce` 模式要求 SQL 前存在有效 QueryPlan，并确定性核对表、字段、值、分组和 Join；默认 `shadow` 只记录差异。
 
 ## 目录
 
@@ -40,6 +42,7 @@ PostgreSQL          business-service (Spring Boot)
 - `compose.yaml`：PostgreSQL 和两个服务的一键编排。
 - `evaluation`：60 条中文标准题集与自动化质量报告。
 - `evaluation/memory_cases.json`：30 条 gold memory、错误记忆和隔离场景专项题集。
+- `evaluation/grounding_cases.json`：25 条 Schema/Join 与 20 条受控值链接专项题集。
 - `docs/TEXT2SQL_RESEARCH_NOTES.md`：最新 Text2SQL 研究映射、已落地优化及后续路线。
 - `docs/architecture/HARNESS_AND_MEMORY.md`：Harness、上下文编译、持久记忆和管理接口。
 - `AGENTS.md`：Codex worktree 协作、安全不变量与统一完成标准。
@@ -66,7 +69,15 @@ docker compose up --build
 ./scripts/apply-knowledge-migration.sh
 ```
 
-该命令还会创建只读 `semantic_catalog`，把现有 Schema、指标和验证 SQL 映射为带版本、来源哈希、信任级别和敏感度的统一语义资产，并导入人工维护的低基数状态值。当前线上检索仍使用原表；后续 Schema/Value Linking 将通过 feature flag 切换。
+该命令会创建只读 `semantic_catalog`，把现有 Schema、指标和验证 SQL 映射为带版本、来源哈希、信任级别和敏感度的统一语义资产，导入人工维护的低基数状态值，并创建脱敏 QueryPlan 记录。`GROUNDING_V2_MODE=off|shadow|enforce` 控制灰度；默认 `shadow` 保持当前答案路径，只增加证据和计划差异观测。
+
+切换策略：
+
+- `off`：只运行旧 hybrid retrieval；
+- `shadow`：旧结果继续供模型使用，同时运行 v2 并记录 evidence；
+- `enforce`：模型使用 v2 目录，必须依次完成 `search_schema_knowledge`、`validate_query_plan`、`safe_read_sql`。
+
+回滚只需改回 `off`，无需删除新表或迁移数据。
 
 服务地址：
 
@@ -191,6 +202,14 @@ cd agent-service
 .venv/bin/python ../scripts/evaluate_retrieval.py \
   --database-url 'postgresql://copilot_readonly:copilot_readonly_dev@localhost:5432/enterprise_copilot'
 ```
+
+Grounding v2 离线验收不依赖数据库或模型下载：
+
+```bash
+./scripts/evaluate_grounding.py --check
+```
+
+该脚本调用生产 linker 代码，检查 Table Recall@5、Column Recall@10、Join Path Exact Match、Value Recall@3 和 candidate Join 零执行；这些指标不代表模型 Text2SQL 准确率。
 
 脚本比较关键词基线与 BGE 中文向量 + RRF 混合检索，并将本次实际运行的 Recall@3、Recall@5、MRR、静态安全拦截率、Oracle SQL 执行成功率和完整结果等价率输出到 `evaluation/reports/`。增加 `--live-agent` 后，还会通过真实 SSE 接口分别评测本地 Qwen 的 SQL 执行、结果等价、危险请求无执行和审计哈希关联率；`--harness-input` 可追加运行完成率、纠错率、Memory Recall@5、延迟和失败分类。详情参见 [评测说明](evaluation/README.md) 和 [作品集说明](PORTFOLIO.md)。
 

@@ -8,6 +8,7 @@ from app.harness.store import RunStore
 from app.security.jwt_resolver import JwtUserResolver
 from app.state.conversation_store import PostgresConversationStore
 from app.state.memory_service import MemoryService
+from app.grounding.plan_store import QueryPlanStore
 
 
 def create_state_router(
@@ -16,6 +17,7 @@ def create_state_router(
     memory_service: MemoryService,
     conversation_store: PostgresConversationStore,
     run_store: RunStore,
+    query_plan_store: QueryPlanStore | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agent-state"])
 
@@ -73,5 +75,21 @@ def create_state_router(
             raise HTTPException(status_code=404, detail="Run not found")
         steps = await run_store.list_steps(run_id)
         return {"run": asdict(run), "steps": [asdict(step) for step in steps]}
+
+    @router.get("/runs/{run_id}/evidence")
+    async def get_run_evidence(
+        run_id: str, authorization: str | None = Header(default=None)
+    ):
+        user = user_from_header(authorization)
+        run = await run_store.get(run_id)
+        is_admin = user.metadata.get("role") == "admin"
+        if run is None or (run.user_id != str(user.id) and not is_admin):
+            raise HTTPException(status_code=404, detail="Run not found")
+        plans = (
+            []
+            if query_plan_store is None
+            else await query_plan_store.list_for_run(run_id)
+        )
+        return {"run_id": run_id, "query_plans": plans}
 
     return router

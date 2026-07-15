@@ -18,11 +18,11 @@ class FakeConversationStore:
         return conversation_id == "owned" and user.id == "alice"
 
 
-def token(user_id: str) -> str:
+def token(user_id: str, role: str = "analyst") -> str:
     return jwt.encode(
         {
             "sub": user_id,
-            "role": "analyst",
+            "role": role,
             "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
         },
         SECRET,
@@ -34,6 +34,11 @@ def test_state_api_is_authenticated_and_user_scoped():
     repository = InMemoryStateRepository()
     service = MemoryService(repository)
     run_store = InMemoryRunStore()
+
+    class FakeQueryPlanStore:
+        async def list_for_run(self, run_id):
+            return [{"plan_hash": "a" * 64, "evidence_ids": ["metric:gmv"]}]
+
     app = FastAPI()
     app.include_router(
         create_state_router(
@@ -41,6 +46,7 @@ def test_state_api_is_authenticated_and_user_scoped():
             memory_service=service,
             conversation_store=FakeConversationStore(),
             run_store=run_store,
+            query_plan_store=FakeQueryPlanStore(),
         )
     )
 
@@ -63,8 +69,19 @@ def test_state_api_is_authenticated_and_user_scoped():
     assert confirmed.status_code == 200
     assert confirmed.json()["status"] == "confirmed"
     assert client.get("/api/runs/run-alice", headers=headers).status_code == 200
+    evidence = client.get("/api/runs/run-alice/evidence", headers=headers)
+    assert evidence.status_code == 200
+    assert evidence.json()["query_plans"][0]["evidence_ids"] == ["metric:gmv"]
     assert client.get(
         "/api/runs/run-alice",
         headers={"Authorization": f"Bearer {token('bob')}"},
     ).status_code == 404
+    assert client.get(
+        "/api/runs/run-alice/evidence",
+        headers={"Authorization": f"Bearer {token('bob')}"},
+    ).status_code == 404
+    assert client.get(
+        "/api/runs/run-alice/evidence",
+        headers={"Authorization": f"Bearer {token('admin-user', 'admin')}"},
+    ).status_code == 200
     assert client.delete("/api/conversations/owned", headers=headers).status_code == 204

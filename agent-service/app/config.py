@@ -15,6 +15,13 @@ def _bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _choice(name: str, default: str, allowed: frozenset[str]) -> str:
+    value = os.getenv(name, default).strip().lower()
+    if value not in allowed:
+        raise ValueError(f"{name} must be one of: {', '.join(sorted(allowed))}")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str = os.getenv(
@@ -43,6 +50,9 @@ class Settings:
     statement_timeout_ms: int = int(os.getenv("STATEMENT_TIMEOUT_MS", "5000"))
     audit_fail_closed: bool = _bool("AUDIT_FAIL_CLOSED", True)
     retrieval_mode: str = os.getenv("RETRIEVAL_MODE", "hybrid").lower()
+    grounding_v2_mode: str = _choice(
+        "GROUNDING_V2_MODE", "shadow", frozenset({"off", "shadow", "enforce"})
+    )
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
     retrieval_top_k: int = int(os.getenv("RETRIEVAL_TOP_K", "8"))
     harness_max_tool_calls: int = int(os.getenv("HARNESS_MAX_TOOL_CALLS", "8"))

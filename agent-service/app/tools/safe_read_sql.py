@@ -15,13 +15,26 @@ from app.security import (
     validate_query_intent,
     validate_result_intent,
     validate_read_query,
+    QueryPlanAlignmentError,
+    query_plan_alignment_errors,
+    validate_sql_against_query_plan,
 )
+from app.grounding.context import get_grounding_state
 
 
 class SafeReadSqlTool(Tool[RunSqlToolArgs]):
-    def __init__(self, runner: SafePostgresRunner, max_rows: int = 200):
+    def __init__(
+        self,
+        runner: SafePostgresRunner,
+        max_rows: int = 200,
+        *,
+        grounding_mode: str = "off",
+    ):
+        if grounding_mode not in {"off", "shadow", "enforce"}:
+            raise ValueError("GROUNDING_V2_MODE must be off, shadow or enforce")
         self.runner = runner
         self.max_rows = max_rows
+        self.grounding_mode = grounding_mode
 
     @property
     def name(self) -> str:
@@ -38,6 +51,24 @@ class SafeReadSqlTool(Tool[RunSqlToolArgs]):
         try:
             guarded = validate_read_query(args.sql, max_rows=self.max_rows)
             validate_query_intent(guarded.sql, get_current_instruction())
+            state = get_grounding_state()
+            validated_plan = state.validated_plan if state else None
+            bundle = state.bundle if state else None
+            shadow_errors: list[str] = []
+            if self.grounding_mode == "enforce":
+                validate_sql_against_query_plan(
+                    guarded.sql,
+                    validated_plan,
+                    bundle.snapshot if bundle else None,
+                    bundle.catalog if bundle else None,
+                )
+            elif self.grounding_mode == "shadow" and bundle is not None:
+                shadow_errors = query_plan_alignment_errors(
+                    guarded.sql,
+                    validated_plan,
+                    bundle.snapshot,
+                    bundle.catalog,
+                )
             frame = await self.runner.run(guarded.sql)
             records = frame.to_dict("records")
             validate_result_intent(records, get_current_instruction())
@@ -59,9 +90,14 @@ class SafeReadSqlTool(Tool[RunSqlToolArgs]):
                     "tables": sorted(guarded.tables),
                     "row_count": len(records),
                     "columns": columns,
+                    "grounding_v2_mode": self.grounding_mode,
+                    "query_plan_hash": (
+                        validated_plan.plan_hash if validated_plan else None
+                    ),
+                    "query_plan_shadow_errors": shadow_errors,
                 },
             )
-        except (QueryIntentError, QueryResultIntentError) as exc:
+        except (QueryIntentError, QueryResultIntentError, QueryPlanAlignmentError) as exc:
             return ToolResult(
                 success=False,
                 result_for_llm=f"Execution-guided semantic validation rejected the result: {exc}",
