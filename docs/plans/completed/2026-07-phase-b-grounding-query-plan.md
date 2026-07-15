@@ -32,7 +32,7 @@
 ## 交付回执
 
 - 分支：`main`
-- 实现 Commit SHA：提交后回填
+- 实现 Commit SHA：`df5648f`
 - 修改摘要：完成目录端点门控、关键词/向量 RRF 双向链接、受控 Value Top-3、confirmed-only 最长 5 跳 BFS、严格 QueryPlan/证据持久化、三态发布、SQL 对齐 Guard 和 run evidence API；修正退款状态 `FAILED`→`REJECTED`。
 - 测试结果：统一验收通过；Python 108/108、Java 9/9。Grounding：Table Recall@5 97.96%、Column Recall@10 95.74%、Join Exact Match 100%、Value Recall@3 100%、candidate Join 自动执行 0、Value 负例误召回 0。Memory：30 题 Recall@5 100%、ineligible 暴露 0。
 - 遗留风险：最终版 `004` 未获批进行第二次实库执行与对象快照复核；完整 live-agent E2E 因未启用本地模型而跳过。已确认但内容错误的记忆暴露率仍为 100%，按范围留到阶段 C。当前按 PRD 假设固定 `tenant=default`，尚未实现多租户/角色级语义目录隔离。QueryPlan v1 在 `enforce` 下对 CTE、集合运算和嵌套多作用域 SQL fail closed。
