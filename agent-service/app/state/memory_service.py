@@ -209,7 +209,17 @@ class MemoryService:
         self, user_id: str, *, confirmed_only: bool = False
     ) -> list[MemoryRecord]:
         statuses = {MemoryStatus.CONFIRMED} if confirmed_only else None
-        return await self.repository.list_memories(user_id, statuses)
+        memories = await self.repository.list_memories(user_id, statuses)
+        if not confirmed_only:
+            return memories
+        now = datetime.now(timezone.utc)
+        return [
+            memory
+            for memory in memories
+            if memory.validity == MemoryValidity.ACTIVE
+            and (memory.valid_from is None or memory.valid_from <= now)
+            and (memory.valid_to is None or memory.valid_to > now)
+        ]
 
     async def search_confirmed(
         self, user_id: str, query: str, *, limit: int = 5,

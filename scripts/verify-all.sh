@@ -21,6 +21,9 @@ echo "[verify] Gold-memory retrieval suite"
 echo "[verify] Grounding v2 linking suite"
 "$PYTHON" "$ROOT/scripts/evaluate_grounding.py" --check
 
+echo "[verify] Context Compiler v2 and clarification suite"
+"$PYTHON" "$ROOT/scripts/evaluate_context.py" --check
+
 echo "[verify] Java tests"
 if [[ -x "$ROOT/business-service/mvnw" ]]; then
   (cd "$ROOT/business-service" && ./mvnw test)

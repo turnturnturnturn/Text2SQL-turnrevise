@@ -17,6 +17,7 @@ class ContextStore(Protocol):
     async def save_manifest(self, manifest: ContextManifest) -> None: ...
     async def get_manifest(self, run_id: str) -> dict[str, Any] | None: ...
     async def save_conversation_state(self, state: ConversationState) -> None: ...
+    async def list_conversation_states(self, conversation_id: str) -> list[dict[str, Any]]: ...
 
 
 class InMemoryContextStore:
@@ -38,6 +39,10 @@ class InMemoryContextStore:
         async with self._lock:
             payload = asdict(state)
             self._conversation_states.setdefault(state.conversation_id, []).append(payload)
+
+    async def list_conversation_states(self, conversation_id: str) -> list[dict[str, Any]]:
+        async with self._lock:
+            return deepcopy(self._conversation_states.get(conversation_id, []))
 
 
 class PostgresContextStore:
@@ -102,3 +107,11 @@ class PostgresContextStore:
                 ),
             )
 
+    async def list_conversation_states(self, conversation_id: str) -> list[dict[str, Any]]:
+        async with await self._connect() as conn:
+            rows = await (await conn.execute(
+                """SELECT state_payload FROM agent_state.conversation_states
+                   WHERE conversation_id=%s ORDER BY summary_version""",
+                (conversation_id,),
+            )).fetchall()
+        return [dict(row["state_payload"]) for row in rows]

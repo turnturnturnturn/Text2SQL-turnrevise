@@ -63,6 +63,7 @@ ALLOWED_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     ),
     RunStatus.GENERATING: frozenset(
         {
+            RunStatus.NEEDS_CLARIFICATION,
             RunStatus.VALIDATING,
             RunStatus.TOOL_RUNNING,
             RunStatus.FAILED,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
+from dataclasses import replace
+from types import SimpleNamespace
 from vanna.capabilities.sql_runner import RunSqlToolArgs
 
 from app.grounding.context import (
@@ -13,6 +15,9 @@ from app.grounding.linker import BidirectionalGroundingLinker, GroundingBundle
 from app.grounding.query_plan import QueryPlanValidator
 from app.grounding.query_plan import QueryPlanDraft
 from app.harness.context import bind_request_context, reset_request_context
+from app.harness import InMemoryRunStore, RunRecord, RunStatus
+from app.harness.clarification import ClarificationService, InMemoryClarificationStore
+from app.tools.knowledge import SearchSchemaKnowledgeArgs, SearchSchemaKnowledgeTool
 from app.tools.safe_read_sql import SafeReadSqlTool
 from app.tools.query_plan import ValidateQueryPlanTool
 from tests.test_grounding_linker import catalog
@@ -157,3 +162,49 @@ async def test_shadow_query_plan_difference_is_observational_not_blocking():
     assert result.success
     assert result.metadata["status"] == "BLOCKED"
     assert result.metadata["error_type"] is None
+
+
+@pytest.mark.asyncio
+async def test_enforce_grounding_ambiguity_creates_source_backed_clarification_card():
+    semantic_catalog = catalog()
+    base = BidirectionalGroundingLinker().link(
+        "销售时间字段", semantic_catalog
+    )
+    snapshot = replace(base, ambiguities=("multiple time fields",))
+    bundle = GroundingBundle(snapshot, semantic_catalog)
+
+    class FakeGroundingService:
+        def search(self, query):
+            return bundle
+
+    runs = InMemoryRunStore()
+    await runs.create(RunRecord("run-ambiguity", "alice", None, "a" * 64))
+    await runs.transition("run-ambiguity", RunStatus.CONTEXT_BUILDING)
+    await runs.transition("run-ambiguity", RunStatus.LINKING)
+    await runs.transition("run-ambiguity", RunStatus.PLANNING)
+    await runs.transition("run-ambiguity", RunStatus.GENERATING)
+    cards = InMemoryClarificationStore()
+    clarification = ClarificationService(runs, cards)
+    tool = SearchSchemaKnowledgeTool(
+        "postgresql://unused",
+        grounding_service=FakeGroundingService(),
+        grounding_mode="enforce",
+        context_harness_mode="enforce",
+        clarification_service=clarification,
+    )
+    tokens = bind_request_context("run-ambiguity", "销售时间字段")
+    try:
+        result = await tool.execute(
+            SimpleNamespace(user=SimpleNamespace(id="alice")),
+            SearchSchemaKnowledgeArgs(query="销售时间字段"),
+        )
+    finally:
+        reset_request_context(tokens)
+
+    assert result.success
+    assert result.metadata["clarification_required"] is True
+    assert (await runs.get("run-ambiguity")).status == RunStatus.NEEDS_CLARIFICATION
+    card = await cards.get_for_parent("run-ambiguity")
+    assert card is not None
+    assert len(card.options) in {2, 3}
+    assert all(option.evidence_id and option.source_hash for option in card.options)

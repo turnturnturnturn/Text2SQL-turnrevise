@@ -2,7 +2,8 @@
   "suite_version": "2026-07-14-v1",
   "targets": {
     "minimum_memory_recall_at_5": 0.9,
-    "maximum_ineligible_memory_exposure_rate": 0.0
+    "maximum_ineligible_memory_exposure_rate": 0.0,
+    "maximum_incorrect_memory_exposure_rate": 0.0
   },
   "memories": [
     {"id": "m-pref-region", "user_id": "alice", "content": "销售额默认按订单区域分组"},
@@ -21,10 +22,10 @@
     {"id": "m-tool-region-sales", "user_id": "alice", "memory_type": "TOOL_PATTERN", "content": "区域销售额查询使用 orders.region 和 orders.total_amount"},
     {"id": "m-tool-refund-report", "user_id": "alice", "memory_type": "TOOL_PATTERN", "content": "退款报表使用 refunds.amount refunds.status refunds.refunded_at"},
 
-    {"id": "m-wrong-gmv", "user_id": "alice", "memory_type": "BUSINESS_TERM", "content": "错误记忆 GMV 包含 DRAFT 草稿订单"},
-    {"id": "m-wrong-refund", "user_id": "alice", "memory_type": "BUSINESS_TERM", "content": "错误记忆 退款率包含 PENDING 和 FAILED 退款"},
-    {"id": "m-wrong-time", "user_id": "alice", "content": "错误记忆 销售时间默认使用订单创建时间 created_at"},
-    {"id": "m-wrong-region", "user_id": "alice", "content": "错误记忆 销售区域默认使用客户注册区域"},
+    {"id": "m-wrong-gmv", "user_id": "alice", "memory_type": "BUSINESS_TERM", "validity": "INVALID", "content": "错误记忆 GMV 包含 DRAFT 草稿订单"},
+    {"id": "m-wrong-refund", "user_id": "alice", "memory_type": "BUSINESS_TERM", "validity": "INVALID", "content": "错误记忆 退款率包含 PENDING 和 FAILED 退款"},
+    {"id": "m-wrong-time", "user_id": "alice", "validity": "INVALID", "content": "错误记忆 销售时间默认使用订单创建时间 created_at"},
+    {"id": "m-wrong-region", "user_id": "alice", "validity": "INVALID", "content": "错误记忆 销售区域默认使用客户注册区域"},
 
     {"id": "m-candidate-format", "user_id": "alice", "status": "candidate", "content": "候选记忆 查询结果改用饼图展示"},
     {"id": "m-rejected-currency", "user_id": "alice", "status": "rejected", "content": "已拒绝记忆 金额统一使用美元"},

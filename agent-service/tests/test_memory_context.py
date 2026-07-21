@@ -9,6 +9,7 @@ from app.state.context import ContextV2Enhancer
 from app.context_v2 import ContextCompiler
 from app.context_v2.store import InMemoryContextStore
 from app.harness.context import bind_request_context, reset_request_context
+from app.harness import InMemoryRunStore, RunRecord
 
 
 @pytest.mark.asyncio
@@ -57,6 +58,7 @@ async def test_non_active_confirmed_memory_is_never_recalled(validity):
     await service.confirm("u1", memory.id)
 
     assert await service.search_confirmed("u1", "GMV DRAFT") == []
+    assert await service.list_for_user("u1", confirmed_only=True) == []
 
 
 @pytest.mark.asyncio
@@ -84,12 +86,15 @@ async def test_context_v2_enhancer_compiles_and_persists_redacted_manifest():
     memory = await service.create_candidate("u1", "默认按华东区域展示")
     await service.confirm("u1", memory.id)
     store = InMemoryContextStore()
+    run_store = InMemoryRunStore()
+    await run_store.create(RunRecord("run-context", "u1", None, "a" * 64))
     enhancer = ContextV2Enhancer(
         service,
         ContextCompiler(token_estimator=len),
         store,
         mode="enforce",
         total_token_budget=3000,
+        run_store=run_store,
     )
     tokens = bind_request_context("run-context", "查询华东销售额")
     try:
@@ -104,3 +109,5 @@ async def test_context_v2_enhancer_compiles_and_persists_redacted_manifest():
     manifest = await store.get_manifest("run-context")
     assert manifest["provenance_coverage"] == 1.0
     assert "SYSTEM SAFETY" not in str(manifest)
+    checkpoint = (await run_store.list_checkpoints("run-context"))[0]
+    assert checkpoint.artifacts[0]["artifact_type"] == "context_manifest"

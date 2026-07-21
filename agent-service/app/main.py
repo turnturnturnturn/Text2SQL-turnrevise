@@ -11,7 +11,7 @@ from app.config import settings
 from app.db import SafePostgresRunner
 from app.harness import HarnessBudget, HarnessLifecycleHook, RequestHarness
 from app.harness.clarification import ClarificationService, PostgresClarificationStore
-from app.context_v2 import ContextCompiler, PostgresContextStore
+from app.context_v2 import ContextCompiler, ConversationStateCompactor, PostgresContextStore
 from app.prompt import CommerceSystemPromptBuilder
 from app.retrieval import LazySentenceEmbedder
 from app.grounding import (
@@ -25,6 +25,7 @@ from app.security.jwt_resolver import JwtUserResolver
 from app.state import (
     MemoryContextEnhancer,
     ContextV2Enhancer,
+    ContextV2ConversationFilter,
     MemoryService,
     PostgresAgentMemory,
     PostgresConversationStore,
@@ -123,6 +124,8 @@ def create_agent() -> Agent:
             embedder_loader=lambda _model_name: shared_embedder,
             grounding_service=grounding_service,
             grounding_mode=settings.grounding_v2_mode,
+            context_harness_mode=settings.context_harness_v2_mode,
+            clarification_service=clarification_service,
         ),
         access_groups=["analyst", "operator", "admin"],
     )
@@ -172,8 +175,13 @@ def create_agent() -> Agent:
             mode=settings.context_harness_v2_mode,
             top_k=settings.memory_top_k,
             total_token_budget=settings.context_token_budget,
+            run_store=run_store,
         ),
-        conversation_filters=[RecentConversationFilter()],
+        conversation_filters=[ContextV2ConversationFilter(
+            ConversationStateCompactor(),
+            context_store,
+            mode=settings.context_harness_v2_mode,
+        )],
         workflow_handler=ActionWorkflowHandler(business_client, memory_service),
         audit_logger=BusinessAuditLogger(
             business_client, fail_closed=settings.audit_fail_closed

@@ -87,7 +87,9 @@ class RequestHarness(Generic[T]):
         operation: Callable[[HarnessRun], AsyncIterator[T]],
     ) -> AsyncIterator[T]:
         run_id = str(uuid.uuid4())
-        tokens = bind_request_context(run_id, instruction)
+        tokens = bind_request_context(
+            run_id, instruction, conversation_id=conversation_id
+        )
         instruction_hash = get_instruction_hash()
         assert instruction_hash is not None
         record = RunRecord(
@@ -114,6 +116,8 @@ class RequestHarness(Generic[T]):
                 async for item in operation(run):
                     yield item
                 current = await self.store.get(run_id)
+                if current is not None and current.status == RunStatus.NEEDS_CLARIFICATION:
+                    return
                 if self.mode == "enforce" and current is not None:
                     if current.status == RunStatus.GENERATING:
                         await self.store.transition(run_id, RunStatus.VALIDATING)

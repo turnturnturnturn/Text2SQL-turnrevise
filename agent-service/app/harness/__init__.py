@@ -1,6 +1,7 @@
 from app.harness.context import (
     get_instruction_hash,
     get_instruction_text,
+    get_conversation_id,
     get_run_id,
 )
 from app.harness.models import (
@@ -41,6 +42,7 @@ __all__ = [
     "UnsafeRecoveryError",
     "get_instruction_hash",
     "get_instruction_text",
+    "get_conversation_id",
     "get_run_id",
     "RiskLevel",
     "UncertaintyDecision",

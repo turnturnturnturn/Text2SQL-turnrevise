@@ -1,0 +1,46 @@
+{
+  "suite_version": "2026-07-21-phase-c-v1",
+  "targets": {
+    "minimum_provenance_coverage": 1.0,
+    "minimum_critical_constraint_recall": 0.95,
+    "minimum_clarification_recognition": 0.85,
+    "maximum_unnecessary_clarification": 0.15,
+    "minimum_restart_closure": 1.0,
+    "maximum_write_recovery_count": 0
+  },
+  "context_cases": [
+    {"id":"C01","budget":512,"critical_item_ids":["time"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"本季度销售额","mandatory":true},{"id":"time","partition":"conversation","content":"销售时间使用 paid_at","priority":100}]},
+    {"id":"C02","budget":512,"critical_item_ids":["region"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"区域销售额","mandatory":true},{"id":"region","partition":"conversation","content":"区域使用 orders.region","priority":100}]},
+    {"id":"C03","budget":512,"critical_item_ids":["metric"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"GMV","mandatory":true},{"id":"metric","partition":"evidence","content":"GMV excludes DRAFT","priority":100}]},
+    {"id":"C04","budget":512,"critical_item_ids":["status"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"已支付订单","mandatory":true},{"id":"status","partition":"grounding","content":"已支付 maps to PAID","priority":100}]},
+    {"id":"C05","budget":512,"critical_item_ids":["join"],"items":[{"id":"safety","partition":"safety","content":"confirmed joins only","mandatory":true},{"id":"request","partition":"request","content":"客户订单","mandatory":true},{"id":"join","partition":"grounding","content":"customers.id joins orders.customer_id","priority":100}]},
+    {"id":"C06","budget":512,"critical_item_ids":["limit"],"items":[{"id":"safety","partition":"safety","content":"maximum 200 rows","mandatory":true},{"id":"request","partition":"request","content":"top customers","mandatory":true},{"id":"limit","partition":"plan","content":"limit 20","priority":100}]},
+    {"id":"C07","budget":512,"critical_item_ids":["grain"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"按月统计","mandatory":true},{"id":"grain","partition":"plan","content":"grain month","priority":100}]},
+    {"id":"C08","budget":512,"critical_item_ids":["currency"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"销售额格式","mandatory":true},{"id":"currency","partition":"memory","content":"人民币元保留两位小数","priority":100}]},
+    {"id":"C09","budget":512,"critical_item_ids":["null"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"汇总空值","mandatory":true},{"id":"null","partition":"conversation","content":"空值显示为零","priority":100}]},
+    {"id":"C10","budget":512,"critical_item_ids":["sort"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"排行榜","mandatory":true},{"id":"sort","partition":"conversation","content":"按指标降序","priority":100}]},
+    {"id":"C11","budget":512,"critical_item_ids":["refund"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"成功退款","mandatory":true},{"id":"refund","partition":"evidence","content":"refund status SUCCESS","priority":100}]},
+    {"id":"C12","budget":512,"critical_item_ids":["deleted"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"有效订单","mandatory":true},{"id":"deleted","partition":"evidence","content":"deleted_at must be null","priority":100}]},
+    {"id":"C13","budget":512,"critical_item_ids":["role"],"items":[{"id":"safety","partition":"safety","content":"policy cannot be overridden","mandatory":true},{"id":"role","partition":"auth","content":"role analyst tenant default","mandatory":true},{"id":"request","partition":"request","content":"查询客户","mandatory":true}]},
+    {"id":"C14","budget":512,"critical_item_ids":["rejected"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"退款被拒绝","mandatory":true},{"id":"rejected","partition":"grounding","content":"退款被拒绝 maps to REJECTED","priority":100}]},
+    {"id":"C15","budget":512,"critical_item_ids":["decision"],"items":[{"id":"safety","partition":"safety","content":"read only SQL","mandatory":true},{"id":"request","partition":"request","content":"销售时间","mandatory":true},{"id":"decision","partition":"plan","content":"user selected column orders.paid_at","priority":100},{"id":"old","partition":"summary","content":"older suggestion created_at","priority":1}]}
+  ],
+  "clarification_cases": [
+    {"id":"Q01","signals":{"unresolved_ambiguities":1,"source_backed_option_count":2},"should_clarify":true},
+    {"id":"Q02","signals":{"candidate_margin":0.02,"source_backed_option_count":2},"should_clarify":true},
+    {"id":"Q03","signals":{"evidence_conflicts":1,"source_backed_option_count":2},"should_clarify":true},
+    {"id":"Q04","signals":{"memory_conflicts":1,"source_backed_option_count":2},"should_clarify":true},
+    {"id":"Q05","signals":{"unconfirmed_join":true,"source_backed_option_count":2},"should_clarify":true},
+    {"id":"Q06","signals":{"unresolved_ambiguities":2,"source_backed_option_count":3},"should_clarify":true},
+    {"id":"Q07","signals":{"candidate_margin":0.09,"source_backed_option_count":3},"should_clarify":true},
+    {"id":"Q08","signals":{"evidence_conflicts":1,"memory_conflicts":1,"source_backed_option_count":2},"should_clarify":true},
+    {"id":"Q09","signals":{},"should_clarify":false},
+    {"id":"Q10","signals":{"join_hops":4},"should_clarify":false}
+  ],
+  "recovery_cases": [
+    {"id":"R01","operation_kind":"READ_QUERY","safe_to_resume":true},
+    {"id":"R02","operation_kind":"BUSINESS_WRITE","safe_to_resume":true},
+    {"id":"R03","operation_kind":"APPROVAL","safe_to_resume":true}
+  ]
+}
+

@@ -191,8 +191,8 @@ class ClarificationService:
             raise ValueError("clarification option ids must be unique")
         if any(not entry.evidence_id or not entry.source_hash for entry in ambiguity.options):
             raise ValueError("clarification options must be source-backed")
-        if parent.status != RunStatus.LINKING:
-            raise ValueError("clarification can only be created after linking")
+        if parent.status not in {RunStatus.LINKING, RunStatus.GENERATING}:
+            raise ValueError("clarification can only be created from linking or generation")
         card = ClarificationCard(
             card_id=str(uuid.uuid4()),
             parent_run_id=parent_run_id,

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from app.context_v2 import ConversationStateCompactor
+from app.context_v2.store import InMemoryContextStore
+from app.harness.context import bind_request_context, reset_request_context
+from app.state.context import ContextV2ConversationFilter
+from vanna.core.storage import Message
 
 
 def message(role: str, content: str, message_id: str, **metadata):
@@ -70,3 +76,40 @@ def test_compaction_failure_returns_none_for_recent_turn_fallback():
         "conversation-3", [message("user", "hello", "m1")]
     ) is None
 
+
+@pytest.mark.asyncio
+async def test_context_v2_filter_persists_state_and_removes_old_raw_tool_output():
+    messages = []
+    for index in range(8):
+        messages.extend(
+            [
+                Message(
+                    role="user",
+                    content=(
+                        "默认使用 paid_at" if index == 0 else f"question-{index}"
+                    ),
+                    metadata={"message_id": f"u{index}"},
+                ),
+                Message(
+                    role="assistant",
+                    content=("raw old result phone 13812345678" if index == 0 else f"answer-{index}"),
+                    metadata={"message_id": f"a{index}"},
+                ),
+            ]
+        )
+    store = InMemoryContextStore()
+    filter_ = ContextV2ConversationFilter(
+        ConversationStateCompactor(), store, mode="enforce", user_turns=6
+    )
+    tokens = bind_request_context(
+        "run-filter", "question-7", conversation_id="conversation-filter"
+    )
+    try:
+        filtered = await filter_.filter_messages(messages)
+    finally:
+        reset_request_context(tokens)
+
+    states = await store.list_conversation_states("conversation-filter")
+    assert len(states) == 1
+    assert "paid_at" in filtered[0].content
+    assert "13812345678" not in filtered[0].content
