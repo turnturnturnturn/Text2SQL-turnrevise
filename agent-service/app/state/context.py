@@ -21,7 +21,7 @@ class MemoryContextEnhancer(LlmContextEnhancer):
         if not matches:
             return system_prompt
         evidence = "\n".join(
-            f"- [{memory.memory_type.value} id={memory.id}] {memory.content}"
+            f"- [{memory.memory_type.value} id={memory.id} source_hash={memory.source_hash}] {memory.content}"
             for _, memory in matches
         )
         return (

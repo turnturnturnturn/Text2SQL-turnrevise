@@ -4,6 +4,7 @@ from vanna.core.user import User
 
 from app.state import InMemoryStateRepository, MemoryContextEnhancer, MemoryService
 from app.state.context import RecentConversationFilter
+from app.state.models import MemoryValidity
 
 
 @pytest.mark.asyncio
@@ -37,3 +38,37 @@ async def test_conversation_filter_keeps_six_user_turns_and_summary():
     assert [message.content for message in filtered if message.role == "user"] == [
         f"question-{index}" for index in range(2, 8)
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "validity",
+    [MemoryValidity.INVALID, MemoryValidity.CONFLICTED, MemoryValidity.SUPERSEDED],
+)
+async def test_non_active_confirmed_memory_is_never_recalled(validity):
+    service = MemoryService(InMemoryStateRepository())
+    memory = await service.create_candidate(
+        "u1", "GMV includes DRAFT", validity=validity
+    )
+    await service.confirm("u1", memory.id)
+
+    assert await service.search_confirmed("u1", "GMV DRAFT") == []
+
+
+@pytest.mark.asyncio
+async def test_confirming_new_conflicting_memory_supersedes_old_memory():
+    repository = InMemoryStateRepository()
+    service = MemoryService(repository)
+    old = await service.create_candidate(
+        "u1", "sales time uses created_at", conflict_key="sales_time"
+    )
+    await service.confirm("u1", old.id)
+    new = await service.create_candidate(
+        "u1", "sales time uses paid_at", conflict_key="sales_time"
+    )
+    await service.confirm("u1", new.id)
+
+    matches = await service.search_confirmed("u1", "sales time", similarity_threshold=0)
+    assert [memory.id for _, memory in matches] == [new.id]
+    assert (await repository.get_memory(old.id, "u1")).validity == MemoryValidity.SUPERSEDED
+    assert any(event.event_type == "superseded" for event in repository.memory_events)

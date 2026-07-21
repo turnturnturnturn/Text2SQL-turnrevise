@@ -8,7 +8,14 @@ from typing import Any, Protocol
 import psycopg
 from psycopg.rows import dict_row
 
-from app.state.models import MemoryEvent, MemoryRecord, MemoryScope, MemoryStatus, MemoryType
+from app.state.models import (
+    MemoryEvent,
+    MemoryRecord,
+    MemoryScope,
+    MemoryStatus,
+    MemoryType,
+    MemoryValidity,
+)
 
 
 class StateRepository(Protocol):
@@ -21,6 +28,7 @@ class StateRepository(Protocol):
     async def get_memory(self, memory_id: str, user_id: str) -> MemoryRecord | None: ...
     async def list_memories(self, user_id: str, statuses: set[MemoryStatus] | None = None, *, include_global: bool = False) -> list[MemoryRecord]: ...
     async def set_memory_status(self, memory_id: str, user_id: str, status: MemoryStatus) -> MemoryRecord | None: ...
+    async def set_memory_validity(self, memory_id: str, user_id: str, validity: MemoryValidity) -> MemoryRecord | None: ...
     async def delete_memory(self, memory_id: str, user_id: str) -> bool: ...
     async def add_memory_event(self, event: MemoryEvent) -> None: ...
     async def delete_expired_conversations(self, retention_days: int) -> int: ...
@@ -87,6 +95,14 @@ class InMemoryStateRepository:
         if not memory or memory.user_id != user_id:
             return None
         memory.status = status
+        memory.updated_at = datetime.now(timezone.utc)
+        return deepcopy(memory)
+
+    async def set_memory_validity(self, memory_id: str, user_id: str, validity: MemoryValidity) -> MemoryRecord | None:
+        memory = self.memories.get(memory_id)
+        if not memory or memory.user_id != user_id:
+            return None
+        memory.validity = validity
         memory.updated_at = datetime.now(timezone.utc)
         return deepcopy(memory)
 
@@ -222,20 +238,25 @@ class PostgresStateRepository:
             tool_name=row["tool_name"], tool_args=row["tool_args"], success=row["success"],
             embedding=list(row["embedding"]) if row["embedding"] else None, metadata=row["metadata"],
             expires_at=row["expires_at"],
+            validity=MemoryValidity(row.get("validity") or MemoryValidity.ACTIVE.value),
+            source_hash=row.get("source_hash"), conflict_key=row.get("conflict_key"),
+            valid_from=row.get("valid_from"), valid_to=row.get("valid_to"),
         )
 
     async def upsert_memory(self, memory: MemoryRecord) -> MemoryRecord:
         async with await self._connect() as conn:
             row = await (await conn.execute(
                 """INSERT INTO agent_state.memories
-                   (id,user_id,scope,memory_type,status,content,normalized_content,source,tool_name,tool_args,success,embedding,metadata,expires_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb,%s)
+                   (id,user_id,scope,memory_type,status,content,normalized_content,source,tool_name,tool_args,success,embedding,metadata,expires_at,validity,source_hash,conflict_key,valid_from,valid_to)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (user_id,memory_type,normalized_content) DO UPDATE SET updated_at=now()
                    RETURNING *""",
                 (memory.id, memory.user_id, memory.scope.value, memory.memory_type.value, memory.status.value, memory.content,
                  memory.normalized_content, memory.source, memory.tool_name,
                  json.dumps(memory.tool_args) if memory.tool_args is not None else None,
-                 memory.success, memory.embedding, json.dumps(memory.metadata), memory.expires_at),
+                 memory.success, memory.embedding, json.dumps(memory.metadata), memory.expires_at,
+                 memory.validity.value, memory.source_hash, memory.conflict_key,
+                 memory.valid_from, memory.valid_to),
             )).fetchone()
         return self._memory(row)
 
@@ -265,6 +286,15 @@ class PostgresStateRepository:
             row = await (await conn.execute(
                 """UPDATE agent_state.memories SET status=%s,updated_at=now()
                    WHERE id=%s AND user_id=%s RETURNING *""", (status.value, memory_id, user_id)
+            )).fetchone()
+        return self._memory(row) if row else None
+
+    async def set_memory_validity(self, memory_id: str, user_id: str, validity: MemoryValidity) -> MemoryRecord | None:
+        async with await self._connect() as conn:
+            row = await (await conn.execute(
+                """UPDATE agent_state.memories SET validity=%s,updated_at=now()
+                   WHERE id=%s AND user_id=%s RETURNING *""",
+                (validity.value, memory_id, user_id),
             )).fetchone()
         return self._memory(row) if row else None
 

@@ -24,6 +24,13 @@ class MemoryScope(StrEnum):
     GLOBAL = "GLOBAL"
 
 
+class MemoryValidity(StrEnum):
+    ACTIVE = "ACTIVE"
+    CONFLICTED = "CONFLICTED"
+    SUPERSEDED = "SUPERSEDED"
+    INVALID = "INVALID"
+
+
 @dataclass(slots=True)
 class MemoryRecord:
     id: str
@@ -42,6 +49,11 @@ class MemoryRecord:
     embedding: list[float] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     expires_at: datetime | None = None
+    validity: MemoryValidity = MemoryValidity.ACTIVE
+    source_hash: str | None = None
+    conflict_key: str | None = None
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
 
 
 @dataclass(slots=True)

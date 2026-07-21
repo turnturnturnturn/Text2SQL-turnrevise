@@ -3,11 +3,19 @@ from __future__ import annotations
 import math
 import re
 import uuid
+import hashlib
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.state.models import MemoryEvent, MemoryRecord, MemoryScope, MemoryStatus, MemoryType
+from app.state.models import (
+    MemoryEvent,
+    MemoryRecord,
+    MemoryScope,
+    MemoryStatus,
+    MemoryType,
+    MemoryValidity,
+)
 from app.state.repositories import StateRepository
 
 Embedder = Callable[[str], Sequence[float]]
@@ -101,6 +109,11 @@ class MemoryService:
         success: bool | None = None,
         metadata: dict[str, Any] | None = None,
         scope: MemoryScope = MemoryScope.USER,
+        validity: MemoryValidity = MemoryValidity.ACTIVE,
+        source_hash: str | None = None,
+        conflict_key: str | None = None,
+        valid_from: datetime | None = None,
+        valid_to: datetime | None = None,
     ) -> MemoryRecord:
         clean = sanitize_memory_content(content)
         if not clean:
@@ -122,6 +135,11 @@ class MemoryService:
             tool_name=tool_name, tool_args=_sanitize_value(tool_args), success=success,
             embedding=self._embedding(clean), metadata=_sanitize_value(metadata or {}),
             expires_at=datetime.now(timezone.utc) + timedelta(days=self.retention_days),
+            validity=validity,
+            source_hash=source_hash or hashlib.sha256(clean.encode("utf-8")).hexdigest(),
+            conflict_key=conflict_key,
+            valid_from=valid_from,
+            valid_to=valid_to,
         )
         stored = await self.repository.upsert_memory(record)
         await self.repository.add_memory_event(
@@ -151,6 +169,27 @@ class MemoryService:
         memory = await self.repository.set_memory_status(memory_id, user_id, MemoryStatus.CONFIRMED)
         if memory:
             await self.repository.add_memory_event(MemoryEvent(memory.id, user_id, "confirmed"))
+            if memory.validity == MemoryValidity.ACTIVE and memory.conflict_key:
+                existing = await self.repository.list_memories(
+                    user_id, {MemoryStatus.CONFIRMED}
+                )
+                for other in existing:
+                    if (
+                        other.id != memory.id
+                        and other.conflict_key == memory.conflict_key
+                        and other.validity == MemoryValidity.ACTIVE
+                    ):
+                        await self.repository.set_memory_validity(
+                            other.id, other.user_id, MemoryValidity.SUPERSEDED
+                        )
+                        await self.repository.add_memory_event(
+                            MemoryEvent(
+                                other.id,
+                                other.user_id,
+                                "superseded",
+                                {"superseded_by": memory.id},
+                            )
+                        )
         return memory
 
     async def reject(self, user_id: str, memory_id: str) -> MemoryRecord | None:
@@ -185,6 +224,13 @@ class MemoryService:
         )
         candidates: list[tuple[MemoryRecord, float, float]] = []
         for memory in memories:
+            now = datetime.now(timezone.utc)
+            if memory.validity != MemoryValidity.ACTIVE:
+                continue
+            if memory.valid_from and memory.valid_from > now:
+                continue
+            if memory.valid_to and memory.valid_to <= now:
+                continue
             if memory_type and memory.memory_type != memory_type:
                 continue
             if tool_name and memory.tool_name != tool_name:
