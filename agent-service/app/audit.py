@@ -21,6 +21,8 @@ from app.harness.context import (
 )
 from app.harness.request import RequestHarness
 from app.harness.request import classify_operation_kind
+from app.evidence import build_evidence_artifact
+from app.runtime.correlation import current_run_id
 
 
 logger = logging.getLogger(__name__)
@@ -93,10 +95,12 @@ class AuditedAgent(Agent):
         self,
         *args: Any,
         request_harness: RequestHarness | None = None,
+        evidence_drawer_mode: str = "off",
         **kwargs: Any,
     ):
         super().__init__(*args, **kwargs)
         self.request_harness = request_harness or RequestHarness()
+        self.evidence_drawer_mode = evidence_drawer_mode
 
     async def _send_message(
         self,
@@ -140,3 +144,6 @@ class AuditedAgent(Agent):
             operation_kind=classify_operation_kind(message),
         ):
             yield component
+        run_id = current_run_id()
+        if self.evidence_drawer_mode != "off" and run_id:
+            yield build_evidence_artifact(run_id)

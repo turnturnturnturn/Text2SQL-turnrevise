@@ -36,6 +36,12 @@ public class AuditEvent {
 
     protected AuditEvent() {}
 
+    public String getRequestId() { return requestId; }
+    public String getEventType() { return eventType; }
+    public String getGeneratedSql() { return generatedSql; }
+    public boolean isSuccess() { return success; }
+    public Long getDurationMs() { return durationMs; }
+
     public AuditEvent(UUID userId, String eventType, UUID actionId, boolean success,
                       Map<String, Object> details) {
         this.userId = userId;

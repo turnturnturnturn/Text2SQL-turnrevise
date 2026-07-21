@@ -16,6 +16,7 @@ from app.state.conversation_store import PostgresConversationStore
 from app.state.memory_service import MemoryService
 from app.grounding.plan_store import QueryPlanStore
 from app.context_v2.store import ContextStore
+from app.evidence import EvidenceService
 
 
 class ClarificationAnswer(BaseModel):
@@ -31,6 +32,7 @@ def create_state_router(
     query_plan_store: QueryPlanStore | None = None,
     clarification_service: ClarificationService | None = None,
     context_store: ContextStore | None = None,
+    evidence_service: EvidenceService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agent-state"])
 
@@ -103,7 +105,12 @@ def create_state_router(
             if query_plan_store is None
             else await query_plan_store.list_for_run(run_id)
         )
-        return {"run_id": run_id, "query_plans": plans}
+        if evidence_service is None:
+            return {"run_id": run_id, "query_plans": plans}
+        view = await evidence_service.build(run, is_admin=is_admin)
+        # Keep the old field during Phase D rollout; its records are already redacted.
+        view["query_plans"] = plans
+        return view
 
     @router.post("/runs/{run_id}/clarify")
     async def clarify_run(

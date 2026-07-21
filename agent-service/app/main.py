@@ -45,6 +45,7 @@ from app.tools import (
 from app.workflow import ActionWorkflowHandler
 from app.ui import login_shell
 from app.runtime import CorrelatedChatHandler
+from app.evidence import EvidenceService
 
 
 def create_llm():
@@ -110,12 +111,18 @@ request_harness = RequestHarness(
     mode=settings.context_harness_v2_mode,
 )
 user_resolver = JwtUserResolver(settings.jwt_secret)
+business_client = BusinessServiceClient(
+    settings.business_service_url, settings.internal_service_token
+)
+evidence_service = EvidenceService(
+    query_plan_store,
+    context_store,
+    business_client,
+    mode=settings.evidence_drawer_mode,
+)
 
 
 def create_agent() -> Agent:
-    business_client = BusinessServiceClient(
-        settings.business_service_url, settings.internal_service_token
-    )
     registry = ToolRegistry()
     registry.register_local_tool(
         SearchSchemaKnowledgeTool(
@@ -194,6 +201,7 @@ def create_agent() -> Agent:
             business_client, fail_closed=settings.audit_fail_closed
         ),
         request_harness=request_harness,
+        evidence_drawer_mode=settings.evidence_drawer_mode,
     )
 
 
@@ -222,6 +230,7 @@ app.include_router(
         query_plan_store=query_plan_store,
         clarification_service=clarification_service,
         context_store=context_store,
+        evidence_service=evidence_service,
     )
 )
 
