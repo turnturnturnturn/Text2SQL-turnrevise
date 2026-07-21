@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import uuid
 from copy import deepcopy
 from datetime import datetime
 from typing import Protocol
@@ -10,6 +12,9 @@ from app.harness.models import (
     TERMINAL_STATUSES,
     InvalidRunTransition,
     RunRecord,
+    RunCheckpoint,
+    OperationKind,
+    UnsafeRecoveryError,
     RunStatus,
     RunStep,
     utc_now,
@@ -44,6 +49,11 @@ class RunStore(Protocol):
         before: datetime | None = None,
     ) -> int: ...
 
+    async def add_checkpoint(self, run_id: str, *, stage: RunStatus, artifacts: list[dict], safe_to_resume: bool) -> RunCheckpoint: ...
+    async def list_checkpoints(self, run_id: str) -> list[RunCheckpoint]: ...
+    async def cancel(self, run_id: str, user_id: str) -> RunRecord: ...
+    async def create_recovery_child(self, parent_run_id: str, user_id: str, instruction: str) -> RunRecord: ...
+
 
 class InMemoryRunStore:
     """Concurrency-safe development store with PostgreSQL-compatible semantics."""
@@ -51,6 +61,7 @@ class InMemoryRunStore:
     def __init__(self) -> None:
         self._records: dict[str, RunRecord] = {}
         self._steps: dict[str, list[RunStep]] = {}
+        self._checkpoints: dict[str, list[RunCheckpoint]] = {}
         self._lock = asyncio.Lock()
 
     async def create(self, record: RunRecord) -> None:
@@ -61,6 +72,7 @@ class InMemoryRunStore:
             self._steps[record.run_id] = [
                 RunStep(record.run_id, record.status, record.created_at)
             ]
+            self._checkpoints[record.run_id] = []
 
     async def transition(
         self,
@@ -143,3 +155,75 @@ class InMemoryRunStore:
                 )
                 count += 1
             return count
+
+    async def add_checkpoint(
+        self,
+        run_id: str,
+        *,
+        stage: RunStatus,
+        artifacts: list[dict],
+        safe_to_resume: bool,
+    ) -> RunCheckpoint:
+        allowed_keys = {"artifact_type", "content_hash", "storage_ref", "metadata"}
+        clean_artifacts = []
+        for artifact in artifacts:
+            if set(artifact) - allowed_keys:
+                raise ValueError("checkpoint artifacts may contain references only")
+            if not all(artifact.get(key) for key in ("artifact_type", "content_hash", "storage_ref")):
+                raise ValueError("checkpoint artifact reference is incomplete")
+            clean_artifacts.append(deepcopy(artifact))
+        async with self._lock:
+            if run_id not in self._records:
+                raise KeyError(run_id)
+            checkpoint = RunCheckpoint(
+                checkpoint_id=str(uuid.uuid4()),
+                run_id=run_id,
+                stage=stage,
+                artifacts=clean_artifacts,
+                safe_to_resume=safe_to_resume,
+            )
+            self._checkpoints[run_id].append(deepcopy(checkpoint))
+            return deepcopy(checkpoint)
+
+    async def list_checkpoints(self, run_id: str) -> list[RunCheckpoint]:
+        async with self._lock:
+            return deepcopy(self._checkpoints.get(run_id, []))
+
+    async def cancel(self, run_id: str, user_id: str) -> RunRecord:
+        record = await self.get(run_id)
+        if record is None:
+            raise KeyError(run_id)
+        if record.user_id != user_id:
+            raise PermissionError("run belongs to another user")
+        if record.status in TERMINAL_STATUSES:
+            return record
+        return await self.transition(
+            run_id, RunStatus.CANCELLED, failure_type="cancelled"
+        )
+
+    async def create_recovery_child(
+        self, parent_run_id: str, user_id: str, instruction: str
+    ) -> RunRecord:
+        parent = await self.get(parent_run_id)
+        if parent is None:
+            raise KeyError(parent_run_id)
+        if parent.user_id != user_id:
+            raise PermissionError("run belongs to another user")
+        if parent.operation_kind != OperationKind.READ_QUERY:
+            raise UnsafeRecoveryError("only read-only query runs may be recovered")
+        if parent.status != RunStatus.FAILED or parent.failure_type != "process_restarted":
+            raise UnsafeRecoveryError("parent is not a restart-closed run")
+        checkpoints = await self.list_checkpoints(parent_run_id)
+        if not checkpoints or not checkpoints[-1].safe_to_resume:
+            raise UnsafeRecoveryError("parent has no safe checkpoint")
+        child = RunRecord(
+            run_id=str(uuid.uuid4()),
+            user_id=user_id,
+            conversation_id=parent.conversation_id,
+            instruction_hash=hashlib.sha256(instruction.encode("utf-8")).hexdigest(),
+            operation_kind=OperationKind.READ_QUERY,
+            parent_run_id=parent.run_id,
+            correlation_id=parent.correlation_id,
+        )
+        await self.create(child)
+        return child

@@ -13,6 +13,8 @@ from app.harness import (
     RequestHarness,
     RunRecord,
     RunStatus,
+    OperationKind,
+    UnsafeRecoveryError,
     get_instruction_hash,
     get_instruction_text,
     get_run_id,
@@ -235,3 +237,152 @@ async def test_closed_stream_is_marked_cancelled():
     record = await store.get(observed_run_id)
     assert record is not None
     assert record.status == RunStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_v2_stage_sequence_records_text2sql_boundaries():
+    store = InMemoryRunStore()
+    record = RunRecord("v2", "user", None, "a" * 64)
+    await store.create(record)
+    for status in (
+        RunStatus.CONTEXT_BUILDING,
+        RunStatus.LINKING,
+        RunStatus.PLANNING,
+        RunStatus.GENERATING,
+        RunStatus.VALIDATING,
+        RunStatus.EXECUTING,
+        RunStatus.VERIFYING,
+        RunStatus.COMPLETED,
+    ):
+        await store.transition("v2", status)
+
+    assert [step.status for step in await store.list_steps("v2")] == [
+        RunStatus.RECEIVED,
+        RunStatus.CONTEXT_BUILDING,
+        RunStatus.LINKING,
+        RunStatus.PLANNING,
+        RunStatus.GENERATING,
+        RunStatus.VALIDATING,
+        RunStatus.EXECUTING,
+        RunStatus.VERIFYING,
+        RunStatus.COMPLETED,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_is_immutable_and_contains_only_artifact_references():
+    store = InMemoryRunStore()
+    await store.create(RunRecord("checkpoint", "user", None, "a" * 64))
+    checkpoint = await store.add_checkpoint(
+        "checkpoint",
+        stage=RunStatus.CONTEXT_BUILDING,
+        artifacts=[
+            {
+                "artifact_type": "context_manifest",
+                "content_hash": "b" * 64,
+                "storage_ref": "agent_state:context:1",
+            }
+        ],
+        safe_to_resume=True,
+    )
+    checkpoint.artifacts[0]["storage_ref"] = "tampered"
+
+    restored = (await store.list_checkpoints("checkpoint"))[0]
+    assert restored.artifacts[0]["storage_ref"] == "agent_state:context:1"
+    assert "content" not in restored.artifacts[0]
+
+
+@pytest.mark.asyncio
+async def test_business_write_checkpoint_cannot_create_recovery_child():
+    store = InMemoryRunStore()
+    parent = RunRecord(
+        "write-parent",
+        "user",
+        None,
+        "a" * 64,
+        operation_kind=OperationKind.BUSINESS_WRITE,
+    )
+    await store.create(parent)
+    await store.add_checkpoint(
+        parent.run_id,
+        stage=RunStatus.RECEIVED,
+        artifacts=[],
+        safe_to_resume=True,
+    )
+    await store.fail_incomplete_runs()
+
+    with pytest.raises(UnsafeRecoveryError, match="read-only"):
+        await store.create_recovery_child(
+            parent.run_id, "user", "retry instruction"
+        )
+
+
+@pytest.mark.asyncio
+async def test_read_query_recovery_creates_child_and_keeps_failed_parent():
+    store = InMemoryRunStore()
+    parent = RunRecord("read-parent", "user", None, "a" * 64)
+    await store.create(parent)
+    await store.add_checkpoint(
+        parent.run_id,
+        stage=RunStatus.LINKING,
+        artifacts=[
+            {
+                "artifact_type": "schema_link",
+                "content_hash": "c" * 64,
+                "storage_ref": "agent_state:artifact:1",
+            }
+        ],
+        safe_to_resume=True,
+    )
+    await store.fail_incomplete_runs()
+
+    child = await store.create_recovery_child(
+        parent.run_id, "user", "retry instruction"
+    )
+    assert child.parent_run_id == parent.run_id
+    assert child.correlation_id == parent.correlation_id
+    assert child.instruction_hash != parent.instruction_hash
+    assert (await store.get(parent.run_id)).status == RunStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_cancel_is_owned_and_idempotent():
+    store = InMemoryRunStore()
+    await store.create(RunRecord("cancel-me", "alice", None, "a" * 64))
+    with pytest.raises(PermissionError):
+        await store.cancel("cancel-me", "bob")
+    first = await store.cancel("cancel-me", "alice")
+    second = await store.cancel("cancel-me", "alice")
+    assert first.status == second.status == RunStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_harness_run_checkpoint_delegates_redacted_artifact_refs():
+    store = InMemoryRunStore()
+    harness = RequestHarness(store)
+    observed_run_id = None
+
+    async def operation(run):
+        nonlocal observed_run_id
+        observed_run_id = run.run_id
+        await run.checkpoint(
+            RunStatus.MODEL_RUNNING,
+            [
+                {
+                    "artifact_type": "context_manifest",
+                    "content_hash": "d" * 64,
+                    "storage_ref": "agent_state:manifest:1",
+                }
+            ],
+        )
+        yield "ok"
+
+    assert await collect(
+        harness.execute_stream(
+            instruction="query",
+            user_id="user",
+            conversation_id=None,
+            operation=operation,
+        )
+    ) == ["ok"]
+    assert (await store.list_checkpoints(observed_run_id))[0].safe_to_resume is True

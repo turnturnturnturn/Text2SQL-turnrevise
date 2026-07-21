@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import uuid
 from datetime import datetime
 
 import psycopg
@@ -11,6 +13,9 @@ from app.harness.models import (
     TERMINAL_STATUSES,
     InvalidRunTransition,
     RunRecord,
+    RunCheckpoint,
+    OperationKind,
+    UnsafeRecoveryError,
     RunStatus,
     RunStep,
 )
@@ -43,6 +48,9 @@ class PostgresRunStore:
             created_at=row["started_at"],
             updated_at=row["updated_at"],
             completed_at=row["finished_at"],
+            operation_kind=OperationKind(row.get("operation_kind") or OperationKind.READ_QUERY.value),
+            parent_run_id=(str(row["parent_run_id"]) if row.get("parent_run_id") else None),
+            correlation_id=(str(row["correlation_id"]) if row.get("correlation_id") else str(row["id"])),
         )
 
     async def create(self, record: RunRecord) -> None:
@@ -51,8 +59,9 @@ class PostgresRunStore:
                 await conn.execute(
                     """INSERT INTO agent_state.agent_runs
                        (id,conversation_id,user_id,request_id,status,model_name,
-                        retrieval_mode,retry_count,tool_call_count,metadata,started_at,updated_at)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)""",
+                        retrieval_mode,retry_count,tool_call_count,metadata,started_at,updated_at,
+                        operation_kind,parent_run_id,correlation_id)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s)""",
                     (
                         record.run_id,
                         record.conversation_id,
@@ -66,6 +75,9 @@ class PostgresRunStore:
                         json.dumps({"instruction_hash": record.instruction_hash}),
                         record.created_at,
                         record.updated_at,
+                        record.operation_kind.value,
+                        record.parent_run_id,
+                        record.correlation_id,
                     ),
                 )
                 await self._insert_step(conn, record.run_id, record.status)
@@ -175,3 +187,99 @@ class PostgresRunStore:
                         conn, str(row["id"]), RunStatus.FAILED, failure_type
                     )
                 return len(rows)
+
+    async def add_checkpoint(
+        self,
+        run_id: str,
+        *,
+        stage: RunStatus,
+        artifacts: list[dict],
+        safe_to_resume: bool,
+    ) -> RunCheckpoint:
+        allowed_keys = {"artifact_type", "content_hash", "storage_ref", "metadata"}
+        for artifact in artifacts:
+            if set(artifact) - allowed_keys or not all(
+                artifact.get(key)
+                for key in ("artifact_type", "content_hash", "storage_ref")
+            ):
+                raise ValueError("checkpoint artifacts may contain complete references only")
+        checkpoint = RunCheckpoint(
+            checkpoint_id=str(uuid.uuid4()),
+            run_id=run_id,
+            stage=stage,
+            artifacts=artifacts,
+            safe_to_resume=safe_to_resume,
+        )
+        async with await self._connect() as conn:
+            await conn.execute(
+                """INSERT INTO agent_state.run_checkpoints
+                   (id,run_id,stage,artifacts,safe_to_resume,created_at)
+                   VALUES (%s,%s,%s,%s::jsonb,%s,%s)""",
+                (
+                    checkpoint.checkpoint_id,
+                    run_id,
+                    stage.value,
+                    json.dumps(artifacts),
+                    safe_to_resume,
+                    checkpoint.created_at,
+                ),
+            )
+        return checkpoint
+
+    async def list_checkpoints(self, run_id: str) -> list[RunCheckpoint]:
+        async with await self._connect() as conn:
+            rows = await (await conn.execute(
+                """SELECT * FROM agent_state.run_checkpoints
+                   WHERE run_id=%s ORDER BY created_at,id""",
+                (run_id,),
+            )).fetchall()
+        return [
+            RunCheckpoint(
+                checkpoint_id=str(row["id"]),
+                run_id=str(row["run_id"]),
+                stage=RunStatus(row["stage"]),
+                artifacts=list(row["artifacts"] or []),
+                safe_to_resume=bool(row["safe_to_resume"]),
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    async def cancel(self, run_id: str, user_id: str) -> RunRecord:
+        record = await self.get(run_id)
+        if record is None:
+            raise KeyError(run_id)
+        if record.user_id != user_id:
+            raise PermissionError("run belongs to another user")
+        if record.status in TERMINAL_STATUSES:
+            return record
+        return await self.transition(
+            run_id, RunStatus.CANCELLED, failure_type="cancelled"
+        )
+
+    async def create_recovery_child(
+        self, parent_run_id: str, user_id: str, instruction: str
+    ) -> RunRecord:
+        parent = await self.get(parent_run_id)
+        if parent is None:
+            raise KeyError(parent_run_id)
+        if parent.user_id != user_id:
+            raise PermissionError("run belongs to another user")
+        if parent.operation_kind != OperationKind.READ_QUERY:
+            raise UnsafeRecoveryError("only read-only query runs may be recovered")
+        if parent.status != RunStatus.FAILED or parent.failure_type != "process_restarted":
+            raise UnsafeRecoveryError("parent is not a restart-closed run")
+        checkpoints = await self.list_checkpoints(parent_run_id)
+        if not checkpoints or not checkpoints[-1].safe_to_resume:
+            raise UnsafeRecoveryError("parent has no safe checkpoint")
+        child = RunRecord(
+            run_id=str(uuid.uuid4()),
+            user_id=user_id,
+            conversation_id=parent.conversation_id,
+            instruction_hash=hashlib.sha256(instruction.encode("utf-8")).hexdigest(),
+            operation_kind=OperationKind.READ_QUERY,
+            parent_run_id=parent.run_id,
+            correlation_id=parent.correlation_id,
+        )
+        await self.create(child)
+        return child

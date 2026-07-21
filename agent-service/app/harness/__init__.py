@@ -9,6 +9,10 @@ from app.harness.models import (
     InvalidRunTransition,
     RunRecord,
     RunStatus,
+    OperationKind,
+    RunArtifact,
+    RunCheckpoint,
+    UnsafeRecoveryError,
 )
 from app.harness.request import HarnessRun, RequestHarness
 from app.harness.lifecycle import HarnessLifecycleHook
@@ -21,10 +25,14 @@ __all__ = [
     "HarnessBudgetExceeded",
     "InMemoryRunStore",
     "InvalidRunTransition",
+    "OperationKind",
     "RequestHarness",
     "RunRecord",
     "RunStatus",
+    "RunArtifact",
+    "RunCheckpoint",
     "RunStore",
+    "UnsafeRecoveryError",
     "get_instruction_hash",
     "get_instruction_text",
     "get_run_id",

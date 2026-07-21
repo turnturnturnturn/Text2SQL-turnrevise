@@ -16,6 +16,7 @@ from app.harness.models import (
     HarnessBudgetExceeded,
     RunRecord,
     RunStatus,
+    TERMINAL_STATUSES,
 )
 from app.harness.store import InMemoryRunStore, RunStore
 
@@ -45,6 +46,20 @@ class HarnessRun:
         retries = await self.store.increment_retries(self.run_id)
         if retries > self.budget.max_read_retries:
             raise HarnessBudgetExceeded("read retry budget exceeded")
+
+    async def checkpoint(
+        self,
+        stage: RunStatus,
+        artifacts: list[dict],
+        *,
+        safe_to_resume: bool = True,
+    ):
+        return await self.store.add_checkpoint(
+            self.run_id,
+            stage=stage,
+            artifacts=artifacts,
+            safe_to_resume=safe_to_resume,
+        )
 
 
 class RequestHarness(Generic[T]):
@@ -110,22 +125,14 @@ class RequestHarness(Generic[T]):
 
     async def _finish_failed(self, run_id: str, failure_type: str) -> None:
         record = await self.store.get(run_id)
-        if record is not None and record.status not in {
-            RunStatus.COMPLETED,
-            RunStatus.FAILED,
-            RunStatus.CANCELLED,
-        }:
+        if record is not None and record.status not in TERMINAL_STATUSES:
             await self.store.transition(
                 run_id, RunStatus.FAILED, failure_type=failure_type
             )
 
     async def _finish_cancelled(self, run_id: str) -> None:
         record = await self.store.get(run_id)
-        if record is not None and record.status not in {
-            RunStatus.COMPLETED,
-            RunStatus.FAILED,
-            RunStatus.CANCELLED,
-        }:
+        if record is not None and record.status not in TERMINAL_STATUSES:
             await self.store.transition(
                 run_id, RunStatus.CANCELLED, failure_type="cancelled"
             )
