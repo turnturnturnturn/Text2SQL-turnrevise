@@ -113,10 +113,7 @@ class PostgresClarificationStore:
                    (id,parent_run_id,user_id,ambiguity_id,question,options,reason,
                     expires_at,created_at,answered_at,selected_option_id,child_run_id)
                    VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s)
-                   ON CONFLICT (parent_run_id) DO UPDATE SET
-                     answered_at=EXCLUDED.answered_at,
-                     selected_option_id=EXCLUDED.selected_option_id,
-                     child_run_id=EXCLUDED.child_run_id""",
+                   ON CONFLICT (parent_run_id) DO NOTHING""",
                 (
                     card.card_id,
                     card.parent_run_id,
@@ -135,11 +132,13 @@ class PostgresClarificationStore:
 
     async def get_for_parent(self, parent_run_id: str) -> ClarificationCard | None:
         async with await self._connect() as conn:
-            row = await (await conn.execute(
-                """SELECT * FROM agent_state.clarification_requests
+            row = await (
+                await conn.execute(
+                    """SELECT * FROM agent_state.clarification_requests
                    WHERE parent_run_id=%s""",
-                (parent_run_id,),
-            )).fetchone()
+                    (parent_run_id,),
+                )
+            ).fetchone()
         if row is None:
             return None
         return ClarificationCard(
@@ -156,6 +155,109 @@ class PostgresClarificationStore:
             selected_option_id=row["selected_option_id"],
             child_run_id=(str(row["child_run_id"]) if row["child_run_id"] else None),
         )
+
+    async def answer_atomic(
+        self, parent_run_id: str, user_id: str, option_id: str
+    ) -> RunRecord:
+        """Consume a card and create its child exactly once in one DB transaction."""
+        async with await self._connect() as conn:
+            async with conn.transaction():
+                row = await (
+                    await conn.execute(
+                        """SELECT c.*, r.conversation_id, r.metadata AS run_metadata,
+                              r.model_name, r.retrieval_mode, r.correlation_id
+                       FROM agent_state.clarification_requests c
+                       JOIN agent_state.agent_runs r ON r.id=c.parent_run_id
+                       WHERE c.parent_run_id=%s
+                       FOR UPDATE OF c""",
+                        (parent_run_id,),
+                    )
+                ).fetchone()
+                if row is None:
+                    raise KeyError(parent_run_id)
+                if str(row["user_id"]) != user_id:
+                    raise PermissionError("clarification belongs to another user")
+                if row["answered_at"] is not None:
+                    raise ClarificationAlreadyAnswered("clarification already answered")
+                if row["expires_at"] <= utc_now():
+                    raise ClarificationExpired("clarification has expired")
+                selected = next(
+                    (
+                        payload
+                        for payload in row["options"]
+                        if payload["option_id"] == option_id
+                    ),
+                    None,
+                )
+                if selected is None:
+                    raise ValueError("unknown clarification option")
+                parent_hash = (row["run_metadata"] or {}).get("instruction_hash", "")
+                digest_input = (
+                    parent_hash
+                    + "\n"
+                    + selected["evidence_id"]
+                    + "\n"
+                    + selected["source_hash"]
+                )
+                child_id = str(uuid.uuid4())
+                instruction_hash = hashlib.sha256(
+                    digest_input.encode("utf-8")
+                ).hexdigest()
+                metadata = {
+                    "instruction_hash": instruction_hash,
+                    "clarification": {
+                        "option_id": option_id,
+                        "value_id": selected["value_id"],
+                        "evidence_id": selected["evidence_id"],
+                        "source_hash": selected["source_hash"],
+                        "trust_level": "user_selected_evidence",
+                    },
+                }
+                await conn.execute(
+                    """INSERT INTO agent_state.agent_runs
+                       (id,conversation_id,user_id,request_id,status,model_name,
+                        retrieval_mode,retry_count,tool_call_count,metadata,
+                        started_at,updated_at,operation_kind,parent_run_id,correlation_id)
+                       VALUES (%s,%s,%s,%s,'RECEIVED',%s,%s,0,0,%s::jsonb,
+                               now(),now(),'READ_QUERY',%s,%s)""",
+                    (
+                        child_id,
+                        row["conversation_id"],
+                        user_id,
+                        child_id,
+                        row["model_name"],
+                        row["retrieval_mode"],
+                        json.dumps(metadata),
+                        parent_run_id,
+                        row["correlation_id"] or parent_run_id,
+                    ),
+                )
+                await conn.execute(
+                    """INSERT INTO agent_state.run_steps
+                       (run_id,sequence_no,stage,status)
+                       VALUES (%s,0,'RECEIVED','RECEIVED')""",
+                    (child_id,),
+                )
+                updated = await (
+                    await conn.execute(
+                        """UPDATE agent_state.clarification_requests
+                       SET answered_at=now(),selected_option_id=%s,child_run_id=%s
+                       WHERE parent_run_id=%s AND answered_at IS NULL
+                       RETURNING answered_at""",
+                        (option_id, child_id, parent_run_id),
+                    )
+                ).fetchone()
+                if updated is None:
+                    raise ClarificationAlreadyAnswered("clarification already answered")
+                return RunRecord(
+                    run_id=child_id,
+                    user_id=user_id,
+                    conversation_id=row["conversation_id"],
+                    instruction_hash=instruction_hash,
+                    operation_kind=OperationKind.READ_QUERY,
+                    parent_run_id=parent_run_id,
+                    correlation_id=str(row["correlation_id"] or parent_run_id),
+                )
 
 
 class ClarificationService:
@@ -187,12 +289,23 @@ class ClarificationService:
             raise PermissionError("run belongs to another user")
         if len(ambiguity.options) not in {2, 3}:
             raise ValueError("clarification requires two or three options")
-        if len({entry.option_id for entry in ambiguity.options}) != len(ambiguity.options):
+        if len({entry.option_id for entry in ambiguity.options}) != len(
+            ambiguity.options
+        ):
             raise ValueError("clarification option ids must be unique")
-        if any(not entry.evidence_id or not entry.source_hash for entry in ambiguity.options):
+        if any(
+            not entry.evidence_id or not entry.source_hash
+            for entry in ambiguity.options
+        ):
             raise ValueError("clarification options must be source-backed")
-        if parent.status not in {RunStatus.LINKING, RunStatus.GENERATING}:
-            raise ValueError("clarification can only be created from linking or generation")
+        if parent.status not in {
+            RunStatus.LINKING,
+            RunStatus.GENERATING,
+            RunStatus.TOOL_RUNNING,
+        }:
+            raise ValueError(
+                "clarification can only be created from linking or schema-search generation"
+            )
         card = ClarificationCard(
             card_id=str(uuid.uuid4()),
             parent_run_id=parent_run_id,
@@ -210,6 +323,9 @@ class ClarificationService:
     async def answer(
         self, parent_run_id: str, user_id: str, option_id: str
     ) -> RunRecord:
+        atomic_answer = getattr(self.card_store, "answer_atomic", None)
+        if atomic_answer is not None:
+            return await atomic_answer(parent_run_id, user_id, option_id)
         async with self._answer_lock:
             card = await self.card_store.get_for_parent(parent_run_id)
             if card is None:
@@ -239,7 +355,9 @@ class ClarificationService:
                 run_id=str(uuid.uuid4()),
                 user_id=user_id,
                 conversation_id=parent.conversation_id,
-                instruction_hash=hashlib.sha256(digest_input.encode("utf-8")).hexdigest(),
+                instruction_hash=hashlib.sha256(
+                    digest_input.encode("utf-8")
+                ).hexdigest(),
                 operation_kind=OperationKind.READ_QUERY,
                 parent_run_id=parent.run_id,
                 correlation_id=parent.correlation_id,

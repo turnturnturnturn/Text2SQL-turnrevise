@@ -70,9 +70,9 @@ async def test_enforce_mode_fails_closed_without_query_plan():
     runner = FakeRunner()
     try:
         grounded_state(with_plan=False)
-        result = await SafeReadSqlTool(
-            runner, grounding_mode="enforce"
-        ).execute(None, RunSqlToolArgs(sql=SQL))
+        result = await SafeReadSqlTool(runner, grounding_mode="enforce").execute(
+            None, RunSqlToolArgs(sql=SQL)
+        )
     finally:
         reset_request_context(tokens)
     assert not result.success
@@ -86,9 +86,9 @@ async def test_enforce_mode_executes_only_sql_aligned_with_valid_plan():
     runner = FakeRunner()
     try:
         grounded_state(with_plan=True)
-        result = await SafeReadSqlTool(
-            runner, grounding_mode="enforce"
-        ).execute(None, RunSqlToolArgs(sql=SQL))
+        result = await SafeReadSqlTool(runner, grounding_mode="enforce").execute(
+            None, RunSqlToolArgs(sql=SQL)
+        )
     finally:
         reset_request_context(tokens)
     assert result.success
@@ -102,15 +102,13 @@ async def test_shadow_mode_records_plan_gap_but_does_not_block_current_path():
     runner = FakeRunner()
     try:
         grounded_state(with_plan=False)
-        result = await SafeReadSqlTool(
-            runner, grounding_mode="shadow"
-        ).execute(None, RunSqlToolArgs(sql=SQL))
+        result = await SafeReadSqlTool(runner, grounding_mode="shadow").execute(
+            None, RunSqlToolArgs(sql=SQL)
+        )
     finally:
         reset_request_context(tokens)
     assert result.success
-    assert result.metadata["query_plan_shadow_errors"] == [
-        "VALID_QUERY_PLAN_REQUIRED"
-    ]
+    assert result.metadata["query_plan_shadow_errors"] == ["VALID_QUERY_PLAN_REQUIRED"]
     assert len(runner.calls) == 1
 
 
@@ -167,9 +165,7 @@ async def test_shadow_query_plan_difference_is_observational_not_blocking():
 @pytest.mark.asyncio
 async def test_enforce_grounding_ambiguity_creates_source_backed_clarification_card():
     semantic_catalog = catalog()
-    base = BidirectionalGroundingLinker().link(
-        "销售时间字段", semantic_catalog
-    )
+    base = BidirectionalGroundingLinker().link("销售时间字段", semantic_catalog)
     snapshot = replace(base, ambiguities=("multiple time fields",))
     bundle = GroundingBundle(snapshot, semantic_catalog)
 
@@ -183,6 +179,7 @@ async def test_enforce_grounding_ambiguity_creates_source_backed_clarification_c
     await runs.transition("run-ambiguity", RunStatus.LINKING)
     await runs.transition("run-ambiguity", RunStatus.PLANNING)
     await runs.transition("run-ambiguity", RunStatus.GENERATING)
+    await runs.transition("run-ambiguity", RunStatus.TOOL_RUNNING)
     cards = InMemoryClarificationStore()
     clarification = ClarificationService(runs, cards)
     tool = SearchSchemaKnowledgeTool(
@@ -208,3 +205,15 @@ async def test_enforce_grounding_ambiguity_creates_source_backed_clarification_c
     assert card is not None
     assert len(card.options) in {2, 3}
     assert all(option.evidence_id and option.source_hash for option in card.options)
+
+    runner = FakeRunner()
+    tokens = bind_request_context("run-ambiguity", "销售时间字段")
+    try:
+        sql_result = await SafeReadSqlTool(
+            runner, grounding_mode="enforce", run_store=runs
+        ).execute(None, RunSqlToolArgs(sql=SQL))
+    finally:
+        reset_request_context(tokens)
+    assert not sql_result.success
+    assert sql_result.metadata["error_type"] == "harness_state"
+    assert runner.calls == []

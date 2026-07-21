@@ -24,10 +24,18 @@ from app.harness.models import (
 class PostgresRunStore:
     """Durable Harness state restricted to the agent_state schema."""
 
-    def __init__(self, database_url: str, *, model_name: str, retrieval_mode: str):
+    def __init__(
+        self,
+        database_url: str,
+        *,
+        model_name: str,
+        retrieval_mode: str,
+        v2_enabled: bool = True,
+    ):
         self.database_url = database_url
         self.model_name = model_name
         self.retrieval_mode = retrieval_mode
+        self.v2_enabled = v2_enabled
 
     async def _connect(self):
         return await psycopg.AsyncConnection.connect(
@@ -48,38 +56,69 @@ class PostgresRunStore:
             created_at=row["started_at"],
             updated_at=row["updated_at"],
             completed_at=row["finished_at"],
-            operation_kind=OperationKind(row.get("operation_kind") or OperationKind.READ_QUERY.value),
-            parent_run_id=(str(row["parent_run_id"]) if row.get("parent_run_id") else None),
-            correlation_id=(str(row["correlation_id"]) if row.get("correlation_id") else str(row["id"])),
+            operation_kind=OperationKind(
+                row.get("operation_kind") or OperationKind.READ_QUERY.value
+            ),
+            parent_run_id=(
+                str(row["parent_run_id"]) if row.get("parent_run_id") else None
+            ),
+            correlation_id=(
+                str(row["correlation_id"])
+                if row.get("correlation_id")
+                else str(row["id"])
+            ),
         )
 
     async def create(self, record: RunRecord) -> None:
         async with await self._connect() as conn:
             async with conn.transaction():
-                await conn.execute(
-                    """INSERT INTO agent_state.agent_runs
+                if self.v2_enabled:
+                    await conn.execute(
+                        """INSERT INTO agent_state.agent_runs
                        (id,conversation_id,user_id,request_id,status,model_name,
                         retrieval_mode,retry_count,tool_call_count,metadata,started_at,updated_at,
                         operation_kind,parent_run_id,correlation_id)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s)""",
-                    (
-                        record.run_id,
-                        record.conversation_id,
-                        record.user_id,
-                        record.run_id,
-                        record.status.value,
-                        self.model_name,
-                        self.retrieval_mode,
-                        record.retry_count,
-                        record.tool_call_count,
-                        json.dumps({"instruction_hash": record.instruction_hash}),
-                        record.created_at,
-                        record.updated_at,
-                        record.operation_kind.value,
-                        record.parent_run_id,
-                        record.correlation_id,
-                    ),
-                )
+                        (
+                            record.run_id,
+                            record.conversation_id,
+                            record.user_id,
+                            record.run_id,
+                            record.status.value,
+                            self.model_name,
+                            self.retrieval_mode,
+                            record.retry_count,
+                            record.tool_call_count,
+                            json.dumps({"instruction_hash": record.instruction_hash}),
+                            record.created_at,
+                            record.updated_at,
+                            record.operation_kind.value,
+                            record.parent_run_id,
+                            record.correlation_id,
+                        ),
+                    )
+                else:
+                    await conn.execute(
+                        """INSERT INTO agent_state.agent_runs
+                           (id,conversation_id,user_id,request_id,status,model_name,
+                            retrieval_mode,retry_count,tool_call_count,metadata,
+                            started_at,updated_at)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)""",
+                        (
+                            record.run_id,
+                            record.conversation_id,
+                            record.user_id,
+                            record.run_id,
+                            record.status.value,
+                            self.model_name,
+                            self.retrieval_mode,
+                            record.retry_count,
+                            record.tool_call_count,
+                            json.dumps({"instruction_hash": record.instruction_hash}),
+                            record.created_at,
+                            record.updated_at,
+                        ),
+                    )
                 await self._insert_step(conn, record.run_id, record.status)
 
     async def transition(
@@ -91,10 +130,12 @@ class PostgresRunStore:
     ) -> RunRecord:
         async with await self._connect() as conn:
             async with conn.transaction():
-                row = await (await conn.execute(
-                    "SELECT * FROM agent_state.agent_runs WHERE id=%s FOR UPDATE",
-                    (run_id,),
-                )).fetchone()
+                row = await (
+                    await conn.execute(
+                        "SELECT * FROM agent_state.agent_runs WHERE id=%s FOR UPDATE",
+                        (run_id,),
+                    )
+                ).fetchone()
                 if row is None:
                     raise KeyError(run_id)
                 current = RunStatus(row["status"])
@@ -103,12 +144,14 @@ class PostgresRunStore:
                         f"cannot transition run {run_id} from {current} to {status}"
                     )
                 finished = "now()" if status in TERMINAL_STATUSES else "finished_at"
-                row = await (await conn.execute(
-                    f"""UPDATE agent_state.agent_runs
+                row = await (
+                    await conn.execute(
+                        f"""UPDATE agent_state.agent_runs
                         SET status=%s,failure_type=%s,updated_at=now(),finished_at={finished}
                         WHERE id=%s RETURNING *""",
-                    (status.value, failure_type, run_id),
-                )).fetchone()
+                        (status.value, failure_type, run_id),
+                    )
+                ).fetchone()
                 await self._insert_step(conn, run_id, status, failure_type)
                 return self._record(row)
 
@@ -125,20 +168,26 @@ class PostgresRunStore:
 
     async def get(self, run_id: str) -> RunRecord | None:
         async with await self._connect() as conn:
-            row = await (await conn.execute(
-                "SELECT * FROM agent_state.agent_runs WHERE id=%s", (run_id,)
-            )).fetchone()
+            row = await (
+                await conn.execute(
+                    "SELECT * FROM agent_state.agent_runs WHERE id=%s", (run_id,)
+                )
+            ).fetchone()
         return self._record(row) if row else None
 
     async def list_steps(self, run_id: str) -> list[RunStep]:
         async with await self._connect() as conn:
-            rows = await (await conn.execute(
-                """SELECT status,created_at,error_type FROM agent_state.run_steps
+            rows = await (
+                await conn.execute(
+                    """SELECT status,created_at,error_type FROM agent_state.run_steps
                    WHERE run_id=%s ORDER BY sequence_no""",
-                (run_id,),
-            )).fetchall()
+                    (run_id,),
+                )
+            ).fetchall()
         return [
-            RunStep(run_id, RunStatus(row["status"]), row["created_at"], row["error_type"])
+            RunStep(
+                run_id, RunStatus(row["status"]), row["created_at"], row["error_type"]
+            )
             for row in rows
         ]
 
@@ -152,11 +201,13 @@ class PostgresRunStore:
         if column not in {"tool_call_count", "retry_count"}:
             raise ValueError("unsupported counter")
         async with await self._connect() as conn:
-            row = await (await conn.execute(
-                f"""UPDATE agent_state.agent_runs SET {column}={column}+1,updated_at=now()
+            row = await (
+                await conn.execute(
+                    f"""UPDATE agent_state.agent_runs SET {column}={column}+1,updated_at=now()
                     WHERE id=%s RETURNING {column}""",
-                (run_id,),
-            )).fetchone()
+                    (run_id,),
+                )
+            ).fetchone()
         if row is None:
             raise KeyError(run_id)
         return int(row[column])
@@ -175,13 +226,15 @@ class PostgresRunStore:
                 if before is not None:
                     condition = " AND updated_at < %s"
                     params.append(before)
-                rows = await (await conn.execute(
-                    f"""UPDATE agent_state.agent_runs
+                rows = await (
+                    await conn.execute(
+                        f"""UPDATE agent_state.agent_runs
                         SET status='FAILED',failure_type=%s,updated_at=now(),finished_at=now()
                         WHERE NOT (status = ANY(%s)){condition}
                         RETURNING id""",
-                    params,
-                )).fetchall()
+                        params,
+                    )
+                ).fetchall()
                 for row in rows:
                     await self._insert_step(
                         conn, str(row["id"]), RunStatus.FAILED, failure_type
@@ -202,7 +255,9 @@ class PostgresRunStore:
                 artifact.get(key)
                 for key in ("artifact_type", "content_hash", "storage_ref")
             ):
-                raise ValueError("checkpoint artifacts may contain complete references only")
+                raise ValueError(
+                    "checkpoint artifacts may contain complete references only"
+                )
         checkpoint = RunCheckpoint(
             checkpoint_id=str(uuid.uuid4()),
             run_id=run_id,
@@ -228,11 +283,13 @@ class PostgresRunStore:
 
     async def list_checkpoints(self, run_id: str) -> list[RunCheckpoint]:
         async with await self._connect() as conn:
-            rows = await (await conn.execute(
-                """SELECT * FROM agent_state.run_checkpoints
+            rows = await (
+                await conn.execute(
+                    """SELECT * FROM agent_state.run_checkpoints
                    WHERE run_id=%s ORDER BY created_at,id""",
-                (run_id,),
-            )).fetchall()
+                    (run_id,),
+                )
+            ).fetchall()
         return [
             RunCheckpoint(
                 checkpoint_id=str(row["id"]),
@@ -267,10 +324,35 @@ class PostgresRunStore:
             raise PermissionError("run belongs to another user")
         if parent.operation_kind != OperationKind.READ_QUERY:
             raise UnsafeRecoveryError("only read-only query runs may be recovered")
-        if parent.status != RunStatus.FAILED or parent.failure_type != "process_restarted":
+        if (
+            parent.status != RunStatus.FAILED
+            or parent.failure_type != "process_restarted"
+        ):
             raise UnsafeRecoveryError("parent is not a restart-closed run")
         checkpoints = await self.list_checkpoints(parent_run_id)
-        if not checkpoints or not checkpoints[-1].safe_to_resume:
+        allowed_stages = {
+            RunStatus.CONTEXT_BUILDING,
+            RunStatus.LINKING,
+            RunStatus.PLANNING,
+            RunStatus.VALIDATING,
+        }
+        allowed_artifacts = {
+            "context_manifest",
+            "schema_link",
+            "query_plan",
+            "validation",
+        }
+        latest = checkpoints[-1] if checkpoints else None
+        if (
+            latest is None
+            or not latest.safe_to_resume
+            or latest.stage not in allowed_stages
+            or not latest.artifacts
+            or any(
+                artifact.get("artifact_type") not in allowed_artifacts
+                for artifact in latest.artifacts
+            )
+        ):
             raise UnsafeRecoveryError("parent has no safe checkpoint")
         child = RunRecord(
             run_id=str(uuid.uuid4()),

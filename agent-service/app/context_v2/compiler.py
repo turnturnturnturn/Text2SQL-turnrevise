@@ -64,7 +64,11 @@ class ContextCompiler:
         indexed = {partition: index for index, partition in enumerate(PARTITION_ORDER)}
         ordered = sorted(
             list(items),
-            key=lambda entry: (indexed[entry.partition], -entry.priority, entry.item_id),
+            key=lambda entry: (
+                indexed[entry.partition],
+                -entry.priority,
+                entry.item_id,
+            ),
         )
         partition_budgets = {
             partition.value: int(total_token_budget * self.partition_ratios[partition])
@@ -80,9 +84,12 @@ class ContextCompiler:
             if entry.mandatory and entry.has_provenance and not entry.is_expired
         )
         if mandatory_tokens > total_token_budget and mode == "enforce":
-            raise ContextCompilationError("mandatory context exceeds total token budget")
+            raise ContextCompilationError(
+                "mandatory context exceeds total token budget"
+            )
 
         total_used = 0
+        valid: list[tuple[ContextItem, int]] = []
         for entry in ordered:
             tokens = self.token_estimator(entry.content)
             if not entry.has_provenance:
@@ -101,7 +108,14 @@ class ContextCompiler:
                     PrunedContextItem(entry.item_id, entry.partition, "expired", tokens)
                 )
                 continue
+            valid.append((entry, tokens))
 
+        # Reserve the total budget for mandatory policy/request items before
+        # admitting optional evidence. Otherwise an early optional partition
+        # can crowd out a later mandatory item and make actual_tokens overflow.
+        admission_order = [pair for pair in valid if pair[0].mandatory]
+        admission_order.extend(pair for pair in valid if not pair[0].mandatory)
+        for entry, tokens in admission_order:
             partition_key = entry.partition.value
             exceeds_partition = (
                 partition_usage[partition_key] + tokens
@@ -110,7 +124,9 @@ class ContextCompiler:
             exceeds_total = total_used + tokens > total_token_budget
             if not entry.mandatory and (exceeds_partition or exceeds_total):
                 reason = (
-                    "partition_budget_exceeded" if exceeds_partition else "total_budget_exceeded"
+                    "partition_budget_exceeded"
+                    if exceeds_partition
+                    else "total_budget_exceeded"
                 )
                 pruned.append(
                     PrunedContextItem(entry.item_id, entry.partition, reason, tokens)
@@ -119,6 +135,16 @@ class ContextCompiler:
             included.append((entry, tokens))
             partition_usage[partition_key] += tokens
             total_used += tokens
+
+        included.sort(
+            key=lambda pair: (
+                indexed[pair[0].partition],
+                -pair[0].priority,
+                pair[0].item_id,
+            )
+        )
+        if total_used > total_token_budget and mode == "enforce":
+            raise ContextCompilationError("compiled context exceeds total token budget")
 
         sections: list[ContextSection] = []
         for partition in PARTITION_ORDER:

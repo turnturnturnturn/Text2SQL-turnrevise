@@ -6,7 +6,13 @@ from vanna.core.lifecycle import LifecycleHook
 from vanna.core.tool import ToolResult
 
 from app.harness.context import get_run_id
-from app.harness.models import HarnessBudget, HarnessBudgetExceeded, RunStatus
+from app.harness.models import (
+    HarnessBudget,
+    HarnessBudgetExceeded,
+    HarnessPausedForClarification,
+    RunStatus,
+    TERMINAL_STATUSES,
+)
 from app.harness.store import RunStore
 
 
@@ -26,6 +32,11 @@ class HarnessLifecycleHook(LifecycleHook):
         run_id = get_run_id()
         if run_id is None:
             return
+        record = await self.store.get(run_id)
+        if record is not None and record.status == RunStatus.NEEDS_CLARIFICATION:
+            raise HarnessPausedForClarification("run is waiting for clarification")
+        if record is not None and record.status in TERMINAL_STATUSES:
+            raise RuntimeError(f"run is already terminal: {record.status}")
         calls = await self.store.increment_tool_calls(run_id)
         if calls > self.budget.max_tool_calls:
             raise HarnessBudgetExceeded("tool call budget exceeded")
@@ -49,6 +60,8 @@ class HarnessLifecycleHook(LifecycleHook):
         if record is not None and record.status == RunStatus.TOOL_RUNNING:
             await self.store.transition(
                 run_id,
-                RunStatus.GENERATING if self.mode == "enforce" else RunStatus.MODEL_RUNNING,
+                RunStatus.GENERATING
+                if self.mode == "enforce"
+                else RunStatus.MODEL_RUNNING,
             )
         return None

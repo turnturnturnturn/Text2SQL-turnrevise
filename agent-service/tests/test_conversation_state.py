@@ -72,9 +72,12 @@ def test_compaction_failure_returns_none_for_recent_turn_fallback():
     def broken(_messages):
         raise RuntimeError("extractor unavailable")
 
-    assert ConversationStateCompactor(extractor=broken).compact(
-        "conversation-3", [message("user", "hello", "m1")]
-    ) is None
+    assert (
+        ConversationStateCompactor(extractor=broken).compact(
+            "conversation-3", [message("user", "hello", "m1")]
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -85,14 +88,16 @@ async def test_context_v2_filter_persists_state_and_removes_old_raw_tool_output(
             [
                 Message(
                     role="user",
-                    content=(
-                        "默认使用 paid_at" if index == 0 else f"question-{index}"
-                    ),
+                    content=("默认使用 paid_at" if index == 0 else f"question-{index}"),
                     metadata={"message_id": f"u{index}"},
                 ),
                 Message(
                     role="assistant",
-                    content=("raw old result phone 13812345678" if index == 0 else f"answer-{index}"),
+                    content=(
+                        "raw old result phone 13812345678"
+                        if index == 0
+                        else f"answer-{index}"
+                    ),
                     metadata={"message_id": f"a{index}"},
                 ),
             ]
@@ -111,5 +116,28 @@ async def test_context_v2_filter_persists_state_and_removes_old_raw_tool_output(
 
     states = await store.list_conversation_states("conversation-filter")
     assert len(states) == 1
+    assert filtered[0].role == "assistant"
     assert "paid_at" in filtered[0].content
     assert "13812345678" not in filtered[0].content
+
+
+class BrokenConversationStore(InMemoryContextStore):
+    async def list_conversation_states(self, conversation_id):
+        raise RuntimeError("state database unavailable")
+
+
+@pytest.mark.asyncio
+async def test_shadow_compaction_failure_returns_legacy_messages():
+    messages = [
+        Message(role="user", content=f"q-{index}", metadata={"message_id": f"u{index}"})
+        for index in range(8)
+    ]
+    filter_ = ContextV2ConversationFilter(
+        ConversationStateCompactor(), BrokenConversationStore(), mode="shadow"
+    )
+    tokens = bind_request_context("run", "q-7", conversation_id="conversation")
+    try:
+        filtered = await filter_.filter_messages(messages)
+    finally:
+        reset_request_context(tokens)
+    assert filtered[0].metadata["kind"] == "extractive_conversation_summary"

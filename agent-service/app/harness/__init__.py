@@ -7,6 +7,7 @@ from app.harness.context import (
 from app.harness.models import (
     HarnessBudget,
     HarnessBudgetExceeded,
+    HarnessPausedForClarification,
     InvalidRunTransition,
     RunRecord,
     RunStatus,
@@ -15,7 +16,7 @@ from app.harness.models import (
     RunCheckpoint,
     UnsafeRecoveryError,
 )
-from app.harness.request import HarnessRun, RequestHarness
+from app.harness.request import HarnessRun, RequestHarness, classify_operation_kind
 from app.harness.lifecycle import HarnessLifecycleHook
 from app.harness.store import InMemoryRunStore, RunStore
 from app.harness.uncertainty import (
@@ -30,6 +31,7 @@ __all__ = [
     "HarnessRun",
     "HarnessLifecycleHook",
     "HarnessBudgetExceeded",
+    "HarnessPausedForClarification",
     "InMemoryRunStore",
     "InvalidRunTransition",
     "OperationKind",
@@ -44,6 +46,7 @@ __all__ = [
     "get_instruction_text",
     "get_conversation_id",
     "get_run_id",
+    "classify_operation_kind",
     "RiskLevel",
     "UncertaintyDecision",
     "UncertaintyGate",

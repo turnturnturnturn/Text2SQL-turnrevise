@@ -21,15 +21,15 @@
 
 - 分支：`feat/phase-c-context-harness`
 - 实现：Context Compiler v2、脱敏 manifest/checkpoint、结构化会话状态、记忆 validity/conflict/supersede、Harness v2 阶段与安全恢复、Grounding 澄清卡、一次性 child run、取消与三态灰度。
-- Python：`137 passed`；Java：`9 passed, 0 failed`。
+- Python：`151 passed, 1 skipped`；PostgreSQL 多 worker 并发澄清集成测试 `1 passed`；Java：`9 passed, 0 failed`。
 - Context 专项：provenance `100%`，关键约束召回 `100%`，必要澄清识别 `100%`，非必要澄清 `0%`，重启闭合 `100%`，写恢复 `0`。
 - Memory：30 题 Recall@5 `100%`，错误记忆暴露 `0%`，不合格记忆暴露 `0%`。
 - Grounding 回归：Table Recall@5 `97.96%`，Column Recall@10 `95.74%`，Join Exact `100%`，Value Recall@3 `100%`，candidate Join 自动执行 `0`。
 - 迁移：`005_context_harness_v2.sql` 在新 PostgreSQL 16 容器初始化后连续重复执行两次成功；5 张阶段 C 表、4 个关键约束稳定，`copilot_agent_state` 具有所需权限，`copilot_readonly` 无访问权；退款状态仅 `REJECTED/PUBLISHED`。
+- 审查收口：澄清后 SQL/后续工具双层阻断；澄清选择与 child run 在 PostgreSQL 单事务中一次性消费；操作类型在 run 创建前分类；每次 LLM 调用统一编译 system/request/conversation/tool/memory 并保持原角色；shadow 存储故障回退旧链路；同 conflict key 记忆确认采用事务锁。
 
 ## 遗留边界
 
 - 未运行本地模型 live-agent E2E；本次不宣称新的模型 Text2SQL 指标。
-- 阶段 C 的恢复 child 只创建可审计新 run，不在 `POST /clarify` 请求内嵌套启动新 SSE 模型流；客户端需继续发起 child 交互。
+- 阶段 C 的澄清 child 会持久化用户所选 evidence/source hash，但不在 `POST /clarify` 请求内嵌套启动新 SSE 模型流；客户端需继续发起 child 交互。
 - QueryPlan v1 对 CTE、集合运算和嵌套多作用域的 enforce 限制仍保留。
-

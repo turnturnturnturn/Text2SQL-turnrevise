@@ -49,10 +49,19 @@ class RunStore(Protocol):
         before: datetime | None = None,
     ) -> int: ...
 
-    async def add_checkpoint(self, run_id: str, *, stage: RunStatus, artifacts: list[dict], safe_to_resume: bool) -> RunCheckpoint: ...
+    async def add_checkpoint(
+        self,
+        run_id: str,
+        *,
+        stage: RunStatus,
+        artifacts: list[dict],
+        safe_to_resume: bool,
+    ) -> RunCheckpoint: ...
     async def list_checkpoints(self, run_id: str) -> list[RunCheckpoint]: ...
     async def cancel(self, run_id: str, user_id: str) -> RunRecord: ...
-    async def create_recovery_child(self, parent_run_id: str, user_id: str, instruction: str) -> RunRecord: ...
+    async def create_recovery_child(
+        self, parent_run_id: str, user_id: str, instruction: str
+    ) -> RunRecord: ...
 
 
 class InMemoryRunStore:
@@ -169,7 +178,10 @@ class InMemoryRunStore:
         for artifact in artifacts:
             if set(artifact) - allowed_keys:
                 raise ValueError("checkpoint artifacts may contain references only")
-            if not all(artifact.get(key) for key in ("artifact_type", "content_hash", "storage_ref")):
+            if not all(
+                artifact.get(key)
+                for key in ("artifact_type", "content_hash", "storage_ref")
+            ):
                 raise ValueError("checkpoint artifact reference is incomplete")
             clean_artifacts.append(deepcopy(artifact))
         async with self._lock:
@@ -211,10 +223,35 @@ class InMemoryRunStore:
             raise PermissionError("run belongs to another user")
         if parent.operation_kind != OperationKind.READ_QUERY:
             raise UnsafeRecoveryError("only read-only query runs may be recovered")
-        if parent.status != RunStatus.FAILED or parent.failure_type != "process_restarted":
+        if (
+            parent.status != RunStatus.FAILED
+            or parent.failure_type != "process_restarted"
+        ):
             raise UnsafeRecoveryError("parent is not a restart-closed run")
         checkpoints = await self.list_checkpoints(parent_run_id)
-        if not checkpoints or not checkpoints[-1].safe_to_resume:
+        allowed_stages = {
+            RunStatus.CONTEXT_BUILDING,
+            RunStatus.LINKING,
+            RunStatus.PLANNING,
+            RunStatus.VALIDATING,
+        }
+        allowed_artifacts = {
+            "context_manifest",
+            "schema_link",
+            "query_plan",
+            "validation",
+        }
+        latest = checkpoints[-1] if checkpoints else None
+        if (
+            latest is None
+            or not latest.safe_to_resume
+            or latest.stage not in allowed_stages
+            or not latest.artifacts
+            or any(
+                artifact.get("artifact_type") not in allowed_artifacts
+                for artifact in latest.artifacts
+            )
+        ):
             raise UnsafeRecoveryError("parent has no safe checkpoint")
         child = RunRecord(
             run_id=str(uuid.uuid4()),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -14,6 +15,8 @@ from app.harness.context import (
 from app.harness.models import (
     HarnessBudget,
     HarnessBudgetExceeded,
+    HarnessPausedForClarification,
+    OperationKind,
     RunRecord,
     RunStatus,
     TERMINAL_STATUSES,
@@ -22,6 +25,26 @@ from app.harness.store import InMemoryRunStore, RunStore
 
 
 T = TypeVar("T")
+
+
+_APPROVAL_COMMAND = re.compile(r"^/(?:confirm-action|cancel-action)\b")
+_WRITE_COMMAND = re.compile(r"^/(?:confirm-memory|reject-memory)\b")
+_WRITE_INTENT = re.compile(
+    r"(?:创建|新建|新增|修改|更新|取消|删除|作废).{0,12}(?:订单|草稿|状态|记忆)"
+    r"|(?:订单|草稿|状态|记忆).{0,12}(?:创建|新建|新增|修改|更新|取消|删除|作废)"
+    r"|\b(?:create|update|cancel|delete)\b.{0,20}\b(?:order|draft|status|memory)\b",
+    re.IGNORECASE,
+)
+
+
+def classify_operation_kind(instruction: str) -> OperationKind:
+    """Conservative pre-run classification for recovery and checkpoint policy."""
+    stripped = instruction.strip()
+    if _APPROVAL_COMMAND.search(stripped):
+        return OperationKind.APPROVAL
+    if _WRITE_COMMAND.search(stripped) or _WRITE_INTENT.search(stripped):
+        return OperationKind.BUSINESS_WRITE
+    return OperationKind.READ_QUERY
 
 
 @dataclass(frozen=True)
@@ -85,6 +108,7 @@ class RequestHarness(Generic[T]):
         user_id: str,
         conversation_id: str | None,
         operation: Callable[[HarnessRun], AsyncIterator[T]],
+        operation_kind: OperationKind | None = None,
     ) -> AsyncIterator[T]:
         run_id = str(uuid.uuid4())
         tokens = bind_request_context(
@@ -97,6 +121,7 @@ class RequestHarness(Generic[T]):
             user_id=user_id,
             conversation_id=conversation_id,
             instruction_hash=instruction_hash,
+            operation_kind=operation_kind or classify_operation_kind(instruction),
         )
         run = HarnessRun(run_id, self.store, self.budget)
         try:
@@ -116,7 +141,10 @@ class RequestHarness(Generic[T]):
                 async for item in operation(run):
                     yield item
                 current = await self.store.get(run_id)
-                if current is not None and current.status == RunStatus.NEEDS_CLARIFICATION:
+                if (
+                    current is not None
+                    and current.status == RunStatus.NEEDS_CLARIFICATION
+                ):
                     return
                 if self.mode == "enforce" and current is not None:
                     if current.status == RunStatus.GENERATING:
@@ -126,6 +154,11 @@ class RequestHarness(Generic[T]):
                 elif current is not None and current.status != RunStatus.VERIFYING:
                     await self.store.transition(run_id, RunStatus.VERIFYING)
                 await self.store.transition(run_id, RunStatus.COMPLETED)
+        except HarnessPausedForClarification:
+            current = await self.store.get(run_id)
+            if current is None or current.status != RunStatus.NEEDS_CLARIFICATION:
+                raise
+            return
         except TimeoutError:
             await self._finish_failed(run_id, "timeout")
             raise

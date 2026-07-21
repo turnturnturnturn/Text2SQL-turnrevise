@@ -57,4 +57,3 @@ class UncertaintyGate:
         if signals.join_hops >= 4:
             return UncertaintyDecision(RiskLevel.MEDIUM, ("complex_join_path",))
         return UncertaintyDecision(RiskLevel.LOW, ())
-

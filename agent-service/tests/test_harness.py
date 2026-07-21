@@ -18,8 +18,12 @@ from app.harness import (
     get_instruction_hash,
     get_instruction_text,
     get_run_id,
+    classify_operation_kind,
 )
 from app.harness.models import utc_now
+from app.harness.context import bind_request_context, reset_request_context
+from app.harness.lifecycle import HarnessLifecycleHook
+from app.harness.models import HarnessPausedForClarification
 
 
 async def collect(stream):
@@ -312,9 +316,7 @@ async def test_business_write_checkpoint_cannot_create_recovery_child():
     await store.fail_incomplete_runs()
 
     with pytest.raises(UnsafeRecoveryError, match="read-only"):
-        await store.create_recovery_child(
-            parent.run_id, "user", "retry instruction"
-        )
+        await store.create_recovery_child(parent.run_id, "user", "retry instruction")
 
 
 @pytest.mark.asyncio
@@ -418,3 +420,61 @@ async def test_enforce_mode_uses_v2_phase_boundaries():
         RunStatus.VERIFYING,
         RunStatus.COMPLETED,
     ]
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_stops_next_tool_after_clarification_pause():
+    store = InMemoryRunStore()
+    await store.create(RunRecord("paused", "user", None, "a" * 64))
+    await store.transition("paused", RunStatus.CONTEXT_BUILDING)
+    await store.transition("paused", RunStatus.LINKING)
+    await store.transition("paused", RunStatus.NEEDS_CLARIFICATION)
+    tokens = bind_request_context("paused", "ambiguous")
+    try:
+        with pytest.raises(HarnessPausedForClarification):
+            await HarnessLifecycleHook(store, HarnessBudget()).before_tool(None, None)
+    finally:
+        reset_request_context(tokens)
+    assert (await store.get("paused")).tool_call_count == 0
+
+
+@pytest.mark.parametrize(
+    ("instruction", "expected"),
+    [
+        ("查询本月销售额", OperationKind.READ_QUERY),
+        ("创建一个订单草稿", OperationKind.BUSINESS_WRITE),
+        ("更新订单状态为已支付", OperationKind.BUSINESS_WRITE),
+        (
+            "/confirm-action 00000000-0000-0000-0000-000000000001 abcdefghijklmnopqrst",
+            OperationKind.APPROVAL,
+        ),
+        (
+            "/confirm-memory 00000000-0000-0000-0000-000000000001",
+            OperationKind.BUSINESS_WRITE,
+        ),
+    ],
+)
+def test_operation_kind_is_classified_before_run(instruction, expected):
+    assert classify_operation_kind(instruction) == expected
+
+
+@pytest.mark.asyncio
+async def test_recovery_rejects_unrecognized_or_empty_checkpoint_artifacts():
+    store = InMemoryRunStore()
+    parent = RunRecord("unsafe-artifact", "user", None, "a" * 64)
+    await store.create(parent)
+    await store.add_checkpoint(
+        parent.run_id,
+        stage=RunStatus.LINKING,
+        artifacts=[
+            {
+                "artifact_type": "business_preview",
+                "content_hash": "d" * 64,
+                "storage_ref": "agent_state:preview:1",
+            }
+        ],
+        safe_to_resume=True,
+    )
+    await store.fail_incomplete_runs()
+    with pytest.raises(UnsafeRecoveryError, match="safe checkpoint"):
+        await store.create_recovery_child(parent.run_id, "user", "retry")

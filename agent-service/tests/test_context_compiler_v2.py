@@ -8,6 +8,7 @@ from app.context_v2 import (
     ContextItem,
     ContextPartition,
 )
+from app.context_v2.store import InMemoryContextStore
 
 
 def item(
@@ -122,3 +123,48 @@ def test_enforce_fails_when_mandatory_items_exceed_total_budget():
             mode="enforce",
             items=[item("safety", ContextPartition.SAFETY, "too-long", mandatory=True)],
         )
+
+
+@pytest.mark.asyncio
+async def test_store_keeps_every_model_call_manifest_version():
+    store = InMemoryContextStore()
+    compiler = ContextCompiler(token_estimator=len)
+    first = compiler.compile(
+        run_id="versioned",
+        total_token_budget=100,
+        mode="shadow",
+        items=[item("safety", ContextPartition.SAFETY, "one", mandatory=True)],
+    ).manifest
+    second = compiler.compile(
+        run_id="versioned",
+        total_token_budget=100,
+        mode="shadow",
+        items=[item("safety", ContextPartition.SAFETY, "second", mandatory=True)],
+    ).manifest
+    await store.save_manifest(first)
+    await store.save_manifest(second)
+
+    versions = await store.list_manifests("versioned")
+    assert [entry["sequence_no"] for entry in versions] == [0, 1]
+    assert (await store.get_manifest("versioned"))["actual_tokens"] == len("second")
+
+
+def test_optional_context_cannot_crowd_out_later_mandatory_context():
+    compiled = ContextCompiler(
+        token_estimator=len,
+        partition_ratios={partition: 1.0 for partition in ContextPartition},
+    ).compile(
+        run_id="mandatory-first",
+        total_token_budget=10,
+        mode="enforce",
+        items=[
+            item("optional-safety", ContextPartition.SAFETY, "123456"),
+            item(
+                "mandatory-request", ContextPartition.REQUEST, "abcdef", mandatory=True
+            ),
+        ],
+    )
+    assert compiled.manifest.actual_tokens == 6
+    assert [entry.item_id for entry in compiled.manifest.included_items] == [
+        "mandatory-request"
+    ]

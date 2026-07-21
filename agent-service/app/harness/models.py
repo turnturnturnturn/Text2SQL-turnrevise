@@ -94,6 +94,7 @@ ALLOWED_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     ),
     RunStatus.TOOL_RUNNING: frozenset(
         {
+            RunStatus.NEEDS_CLARIFICATION,
             RunStatus.MODEL_RUNNING,
             RunStatus.GENERATING,
             RunStatus.VERIFYING,
@@ -121,6 +122,10 @@ class InvalidRunTransition(ValueError):
 
 class HarnessBudgetExceeded(RuntimeError):
     pass
+
+
+class HarnessPausedForClarification(RuntimeError):
+    """Control-flow signal that stops the current agent/tool loop cleanly."""
 
 
 class UnsafeRecoveryError(RuntimeError):

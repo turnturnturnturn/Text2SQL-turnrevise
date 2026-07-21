@@ -20,6 +20,7 @@ from app.harness.context import (
     set_instruction_hash as _set_instruction_hash,
 )
 from app.harness.request import RequestHarness
+from app.harness.request import classify_operation_kind
 
 
 logger = logging.getLogger(__name__)
@@ -136,5 +137,6 @@ class AuditedAgent(Agent):
             user_id=user.id,
             conversation_id=conversation_id,
             operation=operation,
+            operation_kind=classify_operation_kind(message),
         ):
             yield component

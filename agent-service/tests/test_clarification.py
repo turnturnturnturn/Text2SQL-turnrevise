@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import asyncio
+import os
+import uuid
 
 import pytest
 
@@ -12,7 +15,9 @@ from app.harness.clarification import (
     ClarificationService,
     InMemoryClarificationStore,
     MaterialAmbiguity,
+    PostgresClarificationStore,
 )
+from app.state.run_store import PostgresRunStore
 from app.harness.models import utc_now
 from app.harness.uncertainty import RiskLevel, UncertaintyGate, UncertaintySignals
 
@@ -122,7 +127,9 @@ async def test_cross_user_tamper_and_expired_card_create_no_child():
     await cards.save(card)
     with pytest.raises(ClarificationExpired):
         await service.answer(parent.run_id, "alice", "paid")
-    assert len([record for record in runs._records.values() if record.parent_run_id]) == 0
+    assert (
+        len([record for record in runs._records.values() if record.parent_run_id]) == 0
+    )
 
 
 def test_uncertainty_gate_is_deterministic_and_fail_closed():
@@ -142,3 +149,74 @@ def test_uncertainty_gate_is_deterministic_and_fail_closed():
     )
     assert blocked.risk_level == RiskLevel.BLOCKED
 
+
+@pytest.mark.asyncio
+async def test_two_service_instances_cannot_consume_one_card_twice():
+    runs = InMemoryRunStore()
+    parent = RunRecord("parent-race", "alice", None, "a" * 64)
+    await runs.create(parent)
+    await runs.transition(parent.run_id, RunStatus.CONTEXT_BUILDING)
+    await runs.transition(parent.run_id, RunStatus.LINKING)
+    cards = InMemoryClarificationStore()
+    creator = ClarificationService(runs, cards)
+    await creator.create(
+        parent_run_id=parent.run_id,
+        user_id="alice",
+        ambiguity=ambiguity(
+            option("paid", "column:orders.paid_at"),
+            option("created", "column:orders.created_at"),
+        ),
+    )
+    service_a = ClarificationService(runs, cards)
+    service_b = ClarificationService(runs, cards)
+
+    results = await asyncio.gather(
+        service_a.answer(parent.run_id, "alice", "paid"),
+        service_b.answer(parent.run_id, "alice", "paid"),
+        return_exceptions=True,
+    )
+
+    assert sum(isinstance(result, RunRecord) for result in results) == 1
+    assert (
+        sum(isinstance(result, ClarificationAlreadyAnswered) for result in results) == 1
+    )
+    assert (
+        len([record for record in runs._records.values() if record.parent_run_id]) == 1
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("TEST_DATABASE_URL") or not os.getenv("TEST_USER_ID"),
+    reason="PostgreSQL integration environment is not configured",
+)
+async def test_postgres_multi_worker_consumes_clarification_exactly_once():
+    database_url = os.environ["TEST_DATABASE_URL"]
+    user_id = os.environ["TEST_USER_ID"]
+    runs = PostgresRunStore(
+        database_url, model_name="test", retrieval_mode="test", v2_enabled=True
+    )
+    parent = RunRecord(str(uuid.uuid4()), user_id, None, "a" * 64)
+    await runs.create(parent)
+    await runs.transition(parent.run_id, RunStatus.CONTEXT_BUILDING)
+    await runs.transition(parent.run_id, RunStatus.LINKING)
+    creator = ClarificationService(runs, PostgresClarificationStore(database_url))
+    await creator.create(
+        parent_run_id=parent.run_id,
+        user_id=user_id,
+        ambiguity=ambiguity(
+            option("paid", "column:orders.paid_at"),
+            option("created", "column:orders.created_at"),
+        ),
+    )
+    service_a = ClarificationService(runs, PostgresClarificationStore(database_url))
+    service_b = ClarificationService(runs, PostgresClarificationStore(database_url))
+    results = await asyncio.gather(
+        service_a.answer(parent.run_id, user_id, "paid"),
+        service_b.answer(parent.run_id, user_id, "paid"),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(result, RunRecord) for result in results) == 1
+    assert (
+        sum(isinstance(result, ClarificationAlreadyAnswered) for result in results) == 1
+    )

@@ -11,7 +11,11 @@ from app.config import settings
 from app.db import SafePostgresRunner
 from app.harness import HarnessBudget, HarnessLifecycleHook, RequestHarness
 from app.harness.clarification import ClarificationService, PostgresClarificationStore
-from app.context_v2 import ContextCompiler, ConversationStateCompactor, PostgresContextStore
+from app.context_v2 import (
+    ContextCompiler,
+    ConversationStateCompactor,
+    PostgresContextStore,
+)
 from app.prompt import CommerceSystemPromptBuilder
 from app.retrieval import LazySentenceEmbedder
 from app.grounding import (
@@ -23,7 +27,6 @@ from app.grounding import (
 )
 from app.security.jwt_resolver import JwtUserResolver
 from app.state import (
-    MemoryContextEnhancer,
     ContextV2Enhancer,
     ContextV2ConversationFilter,
     MemoryService,
@@ -31,7 +34,6 @@ from app.state import (
     PostgresConversationStore,
     PostgresRunStore,
     PostgresStateRepository,
-    RecentConversationFilter,
 )
 from app.state.api import create_state_router
 from app.tools import (
@@ -73,9 +75,7 @@ grounding_service = GroundingService(
 query_plan_store = PostgresQueryPlanStore(settings.agent_state_database_url)
 memory_service = MemoryService(
     state_repository,
-    embedder=lambda text: shared_embedder.encode(
-        [text], normalize_embeddings=True
-    )[0],
+    embedder=lambda text: shared_embedder.encode([text], normalize_embeddings=True)[0],
     max_active_per_user=settings.memory_max_per_user,
     retention_days=settings.memory_retention_days,
 )
@@ -88,6 +88,7 @@ run_store = PostgresRunStore(
         else settings.ollama_model
     ),
     retrieval_mode=settings.retrieval_mode,
+    v2_enabled=settings.context_harness_v2_mode != "off",
 )
 context_store = PostgresContextStore(settings.agent_state_database_url)
 clarification_store = PostgresClarificationStore(settings.agent_state_database_url)
@@ -143,6 +144,7 @@ def create_agent() -> Agent:
             SafePostgresRunner(settings.database_url, settings.statement_timeout_ms),
             max_rows=settings.max_query_rows,
             grounding_mode=settings.grounding_v2_mode,
+            run_store=run_store,
         ),
         access_groups=["analyst", "operator", "admin"],
     )
@@ -163,11 +165,13 @@ def create_agent() -> Agent:
             max_tool_iterations=settings.harness_max_tool_calls,
         ),
         system_prompt_builder=CommerceSystemPromptBuilder(settings.grounding_v2_mode),
-        lifecycle_hooks=[HarnessLifecycleHook(
-            run_store,
-            harness_budget,
-            mode=settings.context_harness_v2_mode,
-        )],
+        lifecycle_hooks=[
+            HarnessLifecycleHook(
+                run_store,
+                harness_budget,
+                mode=settings.context_harness_v2_mode,
+            )
+        ],
         llm_context_enhancer=ContextV2Enhancer(
             memory_service,
             ContextCompiler(),
@@ -177,11 +181,13 @@ def create_agent() -> Agent:
             total_token_budget=settings.context_token_budget,
             run_store=run_store,
         ),
-        conversation_filters=[ContextV2ConversationFilter(
-            ConversationStateCompactor(),
-            context_store,
-            mode=settings.context_harness_v2_mode,
-        )],
+        conversation_filters=[
+            ContextV2ConversationFilter(
+                ConversationStateCompactor(),
+                context_store,
+                mode=settings.context_harness_v2_mode,
+            )
+        ],
         workflow_handler=ActionWorkflowHandler(business_client, memory_service),
         audit_logger=BusinessAuditLogger(
             business_client, fail_closed=settings.audit_fail_closed

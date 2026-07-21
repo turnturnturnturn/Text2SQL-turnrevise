@@ -62,6 +62,9 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_memories_conflict_active
     ON agent_state.memories(user_id, conflict_key, updated_at DESC)
     WHERE status='confirmed' AND validity='ACTIVE' AND conflict_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_memories_one_active_conflict
+    ON agent_state.memories(user_id, conflict_key)
+    WHERE status='confirmed' AND validity='ACTIVE' AND conflict_key IS NOT NULL;
 
 DO $$
 DECLARE constraint_name TEXT;
@@ -80,14 +83,47 @@ ALTER TABLE agent_state.memory_events
          'superseded','invalidated','conflicted'));
 
 CREATE TABLE IF NOT EXISTS agent_state.context_manifests (
-    run_id UUID PRIMARY KEY REFERENCES agent_state.agent_runs(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id UUID NOT NULL REFERENCES agent_state.agent_runs(id) ON DELETE CASCADE,
+    sequence_no INTEGER NOT NULL CHECK (sequence_no >= 0),
     policy_version VARCHAR(64) NOT NULL,
     mode VARCHAR(12) NOT NULL CHECK (mode IN ('off','shadow','enforce')),
     total_token_budget INTEGER NOT NULL CHECK (total_token_budget > 0),
     actual_tokens INTEGER NOT NULL CHECK (actual_tokens >= 0),
     manifest_payload JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (run_id, sequence_no)
 );
+
+ALTER TABLE agent_state.context_manifests
+    ADD COLUMN IF NOT EXISTS id UUID DEFAULT gen_random_uuid(),
+    ADD COLUMN IF NOT EXISTS sequence_no INTEGER NOT NULL DEFAULT 0;
+
+DO $$
+DECLARE primary_name TEXT;
+BEGIN
+    SELECT conname INTO primary_name
+    FROM pg_constraint
+    WHERE conrelid='agent_state.context_manifests'::regclass
+      AND contype='p'
+      AND pg_get_constraintdef(oid) LIKE '%(run_id)%';
+    IF primary_name IS NOT NULL THEN
+        EXECUTE format(
+            'ALTER TABLE agent_state.context_manifests DROP CONSTRAINT %I',
+            primary_name
+        );
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid='agent_state.context_manifests'::regclass AND contype='p'
+    ) THEN
+        ALTER TABLE agent_state.context_manifests
+            ADD CONSTRAINT context_manifests_pkey PRIMARY KEY (id);
+    END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_context_manifests_run_sequence
+    ON agent_state.context_manifests(run_id, sequence_no);
 
 CREATE TABLE IF NOT EXISTS agent_state.conversation_states (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
