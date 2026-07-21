@@ -17,6 +17,12 @@ from app.harness.models import (
 from app.harness.request import HarnessRun, RequestHarness
 from app.harness.lifecycle import HarnessLifecycleHook
 from app.harness.store import InMemoryRunStore, RunStore
+from app.harness.uncertainty import (
+    RiskLevel,
+    UncertaintyDecision,
+    UncertaintyGate,
+    UncertaintySignals,
+)
 
 __all__ = [
     "HarnessBudget",
@@ -36,4 +42,8 @@ __all__ = [
     "get_instruction_hash",
     "get_instruction_text",
     "get_run_id",
+    "RiskLevel",
+    "UncertaintyDecision",
+    "UncertaintyGate",
+    "UncertaintySignals",
 ]

@@ -3,12 +3,22 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from fastapi import APIRouter, Header, HTTPException, Response, status
+from pydantic import BaseModel
 
+from app.harness.clarification import (
+    ClarificationAlreadyAnswered,
+    ClarificationExpired,
+    ClarificationService,
+)
 from app.harness.store import RunStore
 from app.security.jwt_resolver import JwtUserResolver
 from app.state.conversation_store import PostgresConversationStore
 from app.state.memory_service import MemoryService
 from app.grounding.plan_store import QueryPlanStore
+
+
+class ClarificationAnswer(BaseModel):
+    option_id: str
 
 
 def create_state_router(
@@ -18,6 +28,7 @@ def create_state_router(
     conversation_store: PostgresConversationStore,
     run_store: RunStore,
     query_plan_store: QueryPlanStore | None = None,
+    clarification_service: ClarificationService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agent-state"])
 
@@ -91,5 +102,41 @@ def create_state_router(
             else await query_plan_store.list_for_run(run_id)
         )
         return {"run_id": run_id, "query_plans": plans}
+
+    @router.post("/runs/{run_id}/clarify")
+    async def clarify_run(
+        run_id: str,
+        answer: ClarificationAnswer,
+        authorization: str | None = Header(default=None),
+    ):
+        user = user_from_header(authorization)
+        run = await run_store.get(run_id)
+        if run is None or run.user_id != str(user.id):
+            raise HTTPException(status_code=404, detail="Run not found")
+        if clarification_service is None:
+            raise HTTPException(status_code=404, detail="Clarification not available")
+        try:
+            child = await clarification_service.answer(
+                run_id, str(user.id), answer.option_id
+            )
+        except ClarificationAlreadyAnswered as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ClarificationExpired as exc:
+            raise HTTPException(status_code=410, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return asdict(child)
+
+    @router.post("/runs/{run_id}/cancel")
+    async def cancel_run(
+        run_id: str, authorization: str | None = Header(default=None)
+    ):
+        user = user_from_header(authorization)
+        run = await run_store.get(run_id)
+        is_admin = user.metadata.get("role") == "admin"
+        if run is None or (run.user_id != str(user.id) and not is_admin):
+            raise HTTPException(status_code=404, detail="Run not found")
+        cancelled = await run_store.cancel(run_id, run.user_id)
+        return asdict(cancelled)
 
     return router

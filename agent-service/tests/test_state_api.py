@@ -4,7 +4,13 @@ import jwt
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.harness import InMemoryRunStore, RunRecord
+from app.harness import InMemoryRunStore, RunRecord, RunStatus
+from app.harness.clarification import (
+    ClarificationOption,
+    ClarificationService,
+    InMemoryClarificationStore,
+    MaterialAmbiguity,
+)
 from app.security.jwt_resolver import JwtUserResolver
 from app.state import InMemoryStateRepository, MemoryService
 from app.state.api import create_state_router
@@ -34,6 +40,9 @@ def test_state_api_is_authenticated_and_user_scoped():
     repository = InMemoryStateRepository()
     service = MemoryService(repository)
     run_store = InMemoryRunStore()
+    clarification_service = ClarificationService(
+        run_store, InMemoryClarificationStore()
+    )
 
     class FakeQueryPlanStore:
         async def list_for_run(self, run_id):
@@ -47,6 +56,7 @@ def test_state_api_is_authenticated_and_user_scoped():
             conversation_store=FakeConversationStore(),
             run_store=run_store,
             query_plan_store=FakeQueryPlanStore(),
+            clarification_service=clarification_service,
         )
     )
 
@@ -55,6 +65,30 @@ def test_state_api_is_authenticated_and_user_scoped():
     alice_memory = asyncio.run(service.create_candidate("alice", "默认按区域展示"))
     asyncio.run(service.create_candidate("bob", "不应泄露"))
     asyncio.run(run_store.create(RunRecord("run-alice", "alice", None, "a" * 64)))
+    asyncio.run(
+        run_store.create(RunRecord("clarify-alice", "alice", None, "b" * 64))
+    )
+    asyncio.run(run_store.transition("clarify-alice", RunStatus.CONTEXT_BUILDING))
+    asyncio.run(run_store.transition("clarify-alice", RunStatus.LINKING))
+    asyncio.run(
+        clarification_service.create(
+            parent_run_id="clarify-alice",
+            user_id="alice",
+            ambiguity=MaterialAmbiguity(
+                ambiguity_id="a1",
+                question="paid_at or created_at?",
+                options=(
+                    ClarificationOption(
+                        "paid", "Paid time", "column:paid_at", "column:paid_at", "c" * 64
+                    ),
+                    ClarificationOption(
+                        "created", "Created time", "column:created_at", "column:created_at", "d" * 64
+                    ),
+                ),
+                reason="two candidates",
+            ),
+        )
+    )
     client = TestClient(app)
 
     assert client.get("/api/memories").status_code == 401
@@ -85,3 +119,21 @@ def test_state_api_is_authenticated_and_user_scoped():
         headers={"Authorization": f"Bearer {token('admin-user', 'admin')}"},
     ).status_code == 200
     assert client.delete("/api/conversations/owned", headers=headers).status_code == 204
+    clarified = client.post(
+        "/api/runs/clarify-alice/clarify",
+        headers=headers,
+        json={"option_id": "paid"},
+    )
+    assert clarified.status_code == 200
+    assert clarified.json()["parent_run_id"] == "clarify-alice"
+    assert client.post(
+        "/api/runs/clarify-alice/clarify",
+        headers={"Authorization": f"Bearer {token('bob')}"},
+        json={"option_id": "paid"},
+    ).status_code == 404
+    assert client.post(
+        "/api/runs/run-alice/cancel", headers=headers
+    ).status_code == 200
+    assert client.post(
+        "/api/runs/run-alice/cancel", headers=headers
+    ).json()["status"] == "CANCELLED"
