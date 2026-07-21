@@ -4,6 +4,7 @@ from vanna import Agent, AgentConfig
 from vanna.core.registry import ToolRegistry
 from vanna.servers.fastapi import VannaFastAPIServer
 from fastapi.responses import HTMLResponse
+from vanna.core.user import RequestContext
 
 from app.business_client import BusinessServiceClient
 from app.audit import AuditedAgent, BusinessAuditLogger
@@ -206,6 +207,21 @@ def create_agent() -> Agent:
 
 
 agent = create_agent()
+
+
+async def resume_handler(child, instruction, selection, authorization):
+    request_context = RequestContext(
+        headers={"Authorization": authorization or ""},
+        cookies={},
+        query_params={},
+        metadata={"resume": True},
+    )
+    async for component in agent.resume_message(
+        request_context, instruction, child, selection
+    ):
+        yield component
+
+
 server = VannaFastAPIServer(
     agent,
     config={
@@ -231,6 +247,8 @@ app.include_router(
         clarification_service=clarification_service,
         context_store=context_store,
         evidence_service=evidence_service,
+        clarification_resume_mode=settings.clarification_resume_mode,
+        resume_handler=resume_handler,
     )
 )
 

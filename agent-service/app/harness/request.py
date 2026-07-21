@@ -10,7 +10,9 @@ from typing import Generic, TypeVar
 from app.harness.context import (
     bind_request_context,
     get_instruction_hash,
+    reset_instruction_hash,
     reset_request_context,
+    set_instruction_hash,
 )
 from app.harness.models import (
     HarnessBudget,
@@ -178,6 +180,53 @@ class RequestHarness(Generic[T]):
     async def fail_incomplete_runs(self) -> int:
         """Mark streams interrupted by an earlier process lifetime as failed."""
         return await self.store.fail_incomplete_runs()
+
+    async def execute_resumed_stream(
+        self,
+        *,
+        child: RunRecord,
+        instruction: str,
+        operation: Callable[[HarnessRun], AsyncIterator[T]],
+    ) -> AsyncIterator[T]:
+        """Continue an atomically claimed read child with a fresh request budget."""
+        if child.operation_kind != OperationKind.READ_QUERY:
+            raise ValueError("resume only supports READ_QUERY")
+        if child.status != RunStatus.CONTEXT_BUILDING:
+            raise ValueError("resume child must be atomically claimed first")
+        tokens = bind_request_context(
+            child.run_id, instruction, conversation_id=child.conversation_id
+        )
+        hash_token = set_instruction_hash(child.instruction_hash)
+        run = HarnessRun(child.run_id, self.store, self.budget)
+        try:
+            async with asyncio.timeout(self.budget.timeout_seconds):
+                for stage in (RunStatus.LINKING, RunStatus.PLANNING, RunStatus.GENERATING):
+                    await self.store.transition(child.run_id, stage)
+                async for item in operation(run):
+                    yield item
+                current = await self.store.get(child.run_id)
+                if current is not None and current.status == RunStatus.NEEDS_CLARIFICATION:
+                    return
+                current = await self.store.get(child.run_id)
+                if current is not None and current.status == RunStatus.GENERATING:
+                    await self.store.transition(child.run_id, RunStatus.VALIDATING)
+                    await self.store.transition(child.run_id, RunStatus.EXECUTING)
+                    await self.store.transition(child.run_id, RunStatus.VERIFYING)
+                elif current is not None and current.status != RunStatus.VERIFYING:
+                    await self.store.transition(child.run_id, RunStatus.VERIFYING)
+                await self.store.transition(child.run_id, RunStatus.COMPLETED)
+        except TimeoutError:
+            await self._finish_failed(child.run_id, "timeout")
+            raise
+        except (asyncio.CancelledError, GeneratorExit):
+            await self._finish_cancelled(child.run_id)
+            raise
+        except Exception as exc:
+            await self._finish_failed(child.run_id, type(exc).__name__)
+            raise
+        finally:
+            reset_instruction_hash(hash_token)
+            reset_request_context(tokens)
 
     async def _finish_failed(self, run_id: str, failure_type: str) -> None:
         record = await self.store.get(run_id)

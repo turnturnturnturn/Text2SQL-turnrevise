@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import uuid
+import secrets
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -22,6 +23,12 @@ class ClarificationAlreadyAnswered(RuntimeError):
 
 class ClarificationExpired(RuntimeError):
     pass
+
+
+class ResumeReplay(RuntimeError): pass
+class ResumeExpired(RuntimeError): pass
+class ResumeInvalid(RuntimeError): pass
+class ResumeNotFound(RuntimeError): pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +64,26 @@ class ClarificationCard:
     child_run_id: str | None = None
 
 
+@dataclass(slots=True)
+class ResumeTokenRecord:
+    child_run_id: str
+    parent_run_id: str
+    user_id: str
+    token_hash: str
+    evidence_hash: str
+    expires_at: datetime
+    consumed_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ClarificationResolution:
+    child_run_id: str
+    parent_run_id: str
+    resume_token: str
+    expires_at: datetime
+    selection: dict[str, str]
+
+
 class ClarificationStore(Protocol):
     async def save(self, card: ClarificationCard) -> None: ...
     async def get_for_parent(self, parent_run_id: str) -> ClarificationCard | None: ...
@@ -65,6 +92,7 @@ class ClarificationStore(Protocol):
 class InMemoryClarificationStore:
     def __init__(self) -> None:
         self._cards: dict[str, ClarificationCard] = {}
+        self._resume_tokens: dict[str, ResumeTokenRecord] = {}
         self._lock = asyncio.Lock()
 
     async def save(self, card: ClarificationCard) -> None:
@@ -75,6 +103,23 @@ class InMemoryClarificationStore:
         async with self._lock:
             card = self._cards.get(parent_run_id)
             return deepcopy(card) if card else None
+
+    async def save_resume(self, record: ResumeTokenRecord) -> None:
+        async with self._lock:
+            self._resume_tokens[record.child_run_id] = deepcopy(record)
+
+    async def claim_resume(self, child_run_id: str, user_id: str, token_hash: str) -> None:
+        async with self._lock:
+            record = self._resume_tokens.get(child_run_id)
+            if record is None or record.user_id != user_id:
+                raise ResumeNotFound("resume not found")
+            if record.consumed_at is not None:
+                raise ResumeReplay("resume token already consumed")
+            if record.expires_at <= utc_now():
+                raise ResumeExpired("resume token expired")
+            if not secrets.compare_digest(record.token_hash, token_hash):
+                raise ResumeInvalid("resume token is invalid")
+            record.consumed_at = utc_now()
 
 
 class PostgresClarificationStore:
@@ -157,9 +202,14 @@ class PostgresClarificationStore:
         )
 
     async def answer_atomic(
-        self, parent_run_id: str, user_id: str, option_id: str
-    ) -> RunRecord:
+        self,
+        parent_run_id: str,
+        user_id: str,
+        option_id: str,
+        resume_ttl_seconds: int | None = None,
+    ) -> RunRecord | ClarificationResolution:
         """Consume a card and create its child exactly once in one DB transaction."""
+        resume_token = secrets.token_urlsafe(32) if resume_ttl_seconds else None
         async with await self._connect() as conn:
             async with conn.transaction():
                 row = await (
@@ -249,7 +299,7 @@ class PostgresClarificationStore:
                 ).fetchone()
                 if updated is None:
                     raise ClarificationAlreadyAnswered("clarification already answered")
-                return RunRecord(
+                child = RunRecord(
                     run_id=child_id,
                     user_id=user_id,
                     conversation_id=row["conversation_id"],
@@ -257,6 +307,111 @@ class PostgresClarificationStore:
                     operation_kind=OperationKind.READ_QUERY,
                     parent_run_id=parent_run_id,
                     correlation_id=str(row["correlation_id"] or parent_run_id),
+                )
+                if resume_token is None or resume_ttl_seconds is None:
+                    return child
+                expires_at = utc_now() + timedelta(seconds=resume_ttl_seconds)
+                evidence_hash = hashlib.sha256(
+                    f"{selected['evidence_id']}\n{selected['source_hash']}".encode("utf-8")
+                ).hexdigest()
+                await conn.execute(
+                    """INSERT INTO agent_state.clarification_resume_tokens
+                       (token_hash,child_run_id,parent_run_id,user_id,tenant_id,
+                        evidence_hash,expires_at)
+                       VALUES (%s,%s,%s,%s,'default',%s,%s)""",
+                    (
+                        hashlib.sha256(resume_token.encode("utf-8")).hexdigest(),
+                        child_id,
+                        parent_run_id,
+                        user_id,
+                        evidence_hash,
+                        expires_at,
+                    ),
+                )
+                return ClarificationResolution(
+                    child_run_id=child_id,
+                    parent_run_id=parent_run_id,
+                    resume_token=resume_token,
+                    expires_at=expires_at,
+                    selection={
+                        "option_id": selected["option_id"],
+                        "label": selected["label"],
+                        "evidence_id": selected["evidence_id"],
+                        "source_hash": selected["source_hash"],
+                    },
+                )
+
+    async def answer_atomic_with_resume(
+        self, parent_run_id: str, user_id: str, option_id: str, ttl_seconds: int
+    ) -> ClarificationResolution:
+        result = await self.answer_atomic(
+            parent_run_id, user_id, option_id, ttl_seconds
+        )
+        assert isinstance(result, ClarificationResolution)
+        return result
+
+    async def claim_resume_atomic(
+        self, child_run_id: str, user_id: str, token: str
+    ) -> RunRecord:
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        async with await self._connect() as conn:
+            async with conn.transaction():
+                row = await (
+                    await conn.execute(
+                        """SELECT t.*, child.*, child.id AS child_id,
+                                  parent.status AS parent_status
+                           FROM agent_state.agent_runs child
+                           LEFT JOIN agent_state.clarification_resume_tokens t
+                             ON t.child_run_id=child.id
+                           LEFT JOIN agent_state.agent_runs parent
+                             ON parent.id=child.parent_run_id
+                           WHERE child.id=%s
+                           FOR UPDATE OF child,t""",
+                        (child_run_id,),
+                    )
+                ).fetchone()
+                if row is None or str(row["user_id"]) != user_id:
+                    raise ResumeNotFound("resume not found")
+                if row.get("token_hash") is None:
+                    raise ResumeInvalid("resume token is invalid")
+                if row["consumed_at"] is not None or row["status"] != "RECEIVED":
+                    raise ResumeReplay("resume token already consumed")
+                if row["expires_at"] <= utc_now():
+                    raise ResumeExpired("resume token expired")
+                if not secrets.compare_digest(row["token_hash"], token_hash):
+                    raise ResumeInvalid("resume token is invalid")
+                if row["operation_kind"] != "READ_QUERY" or row["parent_status"] != "NEEDS_CLARIFICATION":
+                    raise ResumeInvalid("resume boundary is invalid")
+                await conn.execute(
+                    "UPDATE agent_state.clarification_resume_tokens SET consumed_at=now() WHERE child_run_id=%s",
+                    (child_run_id,),
+                )
+                updated = await (
+                    await conn.execute(
+                        """UPDATE agent_state.agent_runs
+                           SET status='CONTEXT_BUILDING',updated_at=now()
+                           WHERE id=%s AND status='RECEIVED' RETURNING *""",
+                        (child_run_id,),
+                    )
+                ).fetchone()
+                if updated is None:
+                    raise ResumeReplay("resume child already started")
+                await conn.execute(
+                    """INSERT INTO agent_state.run_steps
+                       (run_id,sequence_no,stage,status)
+                       SELECT %s,COALESCE(MAX(sequence_no)+1,0),'CONTEXT_BUILDING','CONTEXT_BUILDING'
+                       FROM agent_state.run_steps WHERE run_id=%s""",
+                    (child_run_id, child_run_id),
+                )
+                return RunRecord(
+                    run_id=child_run_id,
+                    user_id=user_id,
+                    conversation_id=updated["conversation_id"],
+                    instruction_hash=(updated["metadata"] or {}).get("instruction_hash", ""),
+                    status=RunStatus.CONTEXT_BUILDING,
+                    operation_kind=OperationKind.READ_QUERY,
+                    parent_run_id=str(updated["parent_run_id"]),
+                    correlation_id=str(updated["correlation_id"]),
                 )
 
 
@@ -267,12 +422,16 @@ class ClarificationService:
         card_store: ClarificationStore,
         *,
         ttl_seconds: int = 900,
+        resume_ttl_seconds: int = 300,
     ) -> None:
         if ttl_seconds < 1:
             raise ValueError("ttl_seconds must be positive")
         self.run_store = run_store
         self.card_store = card_store
         self.ttl_seconds = ttl_seconds
+        if resume_ttl_seconds < 1:
+            raise ValueError("resume_ttl_seconds must be positive")
+        self.resume_ttl_seconds = resume_ttl_seconds
         self._answer_lock = asyncio.Lock()
 
     async def create(
@@ -368,3 +527,91 @@ class ClarificationService:
             card.child_run_id = child.run_id
             await self.card_store.save(card)
             return child
+
+    async def answer_with_resume(
+        self, parent_run_id: str, user_id: str, option_id: str
+    ) -> ClarificationResolution:
+        parent = await self.run_store.get(parent_run_id)
+        if parent is None:
+            raise KeyError(parent_run_id)
+        if parent.user_id != user_id:
+            raise PermissionError("clarification belongs to another user")
+        if parent.operation_kind != OperationKind.READ_QUERY:
+            raise ValueError("clarification resume only supports READ_QUERY")
+        atomic = getattr(self.card_store, "answer_atomic_with_resume", None)
+        if atomic is not None:
+            return await atomic(
+                parent_run_id, user_id, option_id, self.resume_ttl_seconds
+            )
+
+        child = await self.answer(parent_run_id, user_id, option_id)
+        card = await self.card_store.get_for_parent(parent_run_id)
+        assert card is not None
+        selected = next(item for item in card.options if item.option_id == option_id)
+        token = secrets.token_urlsafe(32)
+        expires_at = utc_now() + timedelta(seconds=self.resume_ttl_seconds)
+        evidence_hash = hashlib.sha256(
+            f"{selected.evidence_id}\n{selected.source_hash}".encode("utf-8")
+        ).hexdigest()
+        await self.card_store.save_resume(ResumeTokenRecord(
+            child_run_id=child.run_id,
+            parent_run_id=parent_run_id,
+            user_id=user_id,
+            token_hash=hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            evidence_hash=evidence_hash,
+            expires_at=expires_at,
+        ))
+        return ClarificationResolution(
+            child_run_id=child.run_id,
+            parent_run_id=parent_run_id,
+            resume_token=token,
+            expires_at=expires_at,
+            selection={
+                "option_id": selected.option_id,
+                "label": selected.label,
+                "evidence_id": selected.evidence_id,
+                "source_hash": selected.source_hash,
+            },
+        )
+
+    async def claim_resume(
+        self, child_run_id: str, user_id: str, token: str
+    ) -> RunRecord:
+        if not token or len(token) > 256:
+            raise ResumeInvalid("resume token is invalid")
+        child = await self.run_store.get(child_run_id)
+        if child is None or child.user_id != user_id:
+            raise ResumeNotFound("resume not found")
+        if child.operation_kind != OperationKind.READ_QUERY:
+            raise ResumeInvalid("resume child must be READ_QUERY")
+        if child.status != RunStatus.RECEIVED:
+            raise ResumeReplay("resume child already started")
+        parent = await self.run_store.get(child.parent_run_id or "")
+        if parent is None or parent.status != RunStatus.NEEDS_CLARIFICATION:
+            raise ResumeInvalid("resume parent is not awaiting clarification")
+        atomic = getattr(self.card_store, "claim_resume_atomic", None)
+        if atomic is not None:
+            return await atomic(child_run_id, user_id, token)
+        await self.card_store.claim_resume(
+            child_run_id,
+            user_id,
+            hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        )
+        return await self.run_store.transition(child_run_id, RunStatus.CONTEXT_BUILDING)
+
+    async def selected_evidence(self, parent_run_id: str) -> dict[str, str] | None:
+        card = await self.card_store.get_for_parent(parent_run_id)
+        if card is None or card.selected_option_id is None:
+            return None
+        selected = next(
+            (item for item in card.options if item.option_id == card.selected_option_id),
+            None,
+        )
+        if selected is None:
+            return None
+        return {
+            "option_id": selected.option_id,
+            "label": selected.label,
+            "evidence_id": selected.evidence_id,
+            "source_hash": selected.source_hash,
+        }

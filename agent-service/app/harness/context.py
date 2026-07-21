@@ -18,6 +18,9 @@ _instruction_text: ContextVar[str | None] = ContextVar(
 _conversation_id: ContextVar[str | None] = ContextVar(
     "harness_conversation_id", default=None
 )
+_resume_evidence: ContextVar[dict[str, str] | None] = ContextVar(
+    "harness_resume_evidence", default=None
+)
 
 
 @dataclass(frozen=True)
@@ -76,3 +79,16 @@ def set_instruction_hash(value: str) -> Token[str | None]:
 
 def reset_instruction_hash(token: Token[str | None]) -> None:
     _instruction_hash.reset(token)
+
+
+def set_resume_evidence(value: dict[str, str]) -> Token[dict[str, str] | None]:
+    return _resume_evidence.set(dict(value))
+
+
+def reset_resume_evidence(token: Token[dict[str, str] | None]) -> None:
+    _resume_evidence.reset(token)
+
+
+def get_resume_evidence() -> dict[str, str] | None:
+    value = _resume_evidence.get()
+    return dict(value) if value else None

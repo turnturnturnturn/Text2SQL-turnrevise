@@ -23,6 +23,8 @@ from app.harness.request import RequestHarness
 from app.harness.request import classify_operation_kind
 from app.evidence import build_evidence_artifact
 from app.runtime.correlation import current_run_id
+from app.harness.context import reset_resume_evidence, set_resume_evidence
+from app.harness.models import RunRecord
 
 
 logger = logging.getLogger(__name__)
@@ -147,3 +149,36 @@ class AuditedAgent(Agent):
         run_id = current_run_id()
         if self.evidence_drawer_mode != "off" and run_id:
             yield build_evidence_artifact(run_id)
+
+    async def resume_message(
+        self,
+        request_context: RequestContext,
+        instruction: str,
+        child: RunRecord,
+        selection: dict[str, str],
+    ) -> AsyncGenerator[UiComponent, None]:
+        user = await self.user_resolver.resolve_user(request_context)
+        if str(user.id) != child.user_id:
+            raise PermissionError("resume belongs to another user")
+        parent_send_message = super()._send_message
+        evidence_token = set_resume_evidence(selection)
+
+        async def operation(_run):
+            async for component in parent_send_message(
+                request_context,
+                instruction,
+                conversation_id=child.conversation_id,
+            ):
+                yield component
+
+        try:
+            async for component in self.request_harness.execute_resumed_stream(
+                child=child,
+                instruction=instruction,
+                operation=operation,
+            ):
+                yield component
+            if self.evidence_drawer_mode != "off":
+                yield build_evidence_artifact(child.run_id)
+        finally:
+            reset_resume_evidence(evidence_token)

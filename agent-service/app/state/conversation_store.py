@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from vanna.core.storage import Conversation, ConversationStore, Message
 from vanna.core.user import User
 
@@ -44,3 +46,18 @@ class PostgresConversationStore(ConversationStore):
             user.id, max(0, limit), max(0, offset)
         )
         return [Conversation.model_validate(payload) for payload in payloads]
+
+    async def find_instruction_by_hash(
+        self, conversation_id: str, user_id: str, instruction_hash: str
+    ) -> str | None:
+        payload = await self.repository.get_conversation(conversation_id, user_id)
+        if not payload:
+            return None
+        for message in payload.get("messages", []):
+            role = message.get("role") if isinstance(message, dict) else None
+            content = message.get("content") if isinstance(message, dict) else None
+            if role == "user" and isinstance(content, str):
+                digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                if digest == instruction_hash:
+                    return content
+        return None

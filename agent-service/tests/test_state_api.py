@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from vanna.core import RichTextComponent, SimpleTextComponent, UiComponent
 
 from app.harness import InMemoryRunStore, RunRecord, RunStatus
 from app.harness.clarification import (
@@ -24,6 +25,11 @@ SECRET = "state-api-test-secret-that-is-at-least-32-characters"
 class FakeConversationStore:
     async def delete_conversation(self, conversation_id, user):
         return conversation_id == "owned" and user.id == "alice"
+
+    async def find_instruction_by_hash(self, conversation_id, user_id, instruction_hash):
+        if conversation_id == "conversation" and user_id == "alice":
+            return "original question"
+        return None
 
 
 def token(user_id: str, role: str = "analyst") -> str:
@@ -52,6 +58,15 @@ def test_state_api_is_authenticated_and_user_scoped():
             return [{"plan_hash": "a" * 64, "evidence_ids": ["metric:gmv"]}]
 
     app = FastAPI()
+
+    async def resume_handler(child, instruction, selection, authorization):
+        assert instruction == "original question"
+        assert selection["evidence_id"] == "column:paid_at"
+        yield UiComponent(
+            rich_component=RichTextComponent(content="resumed"),
+            simple_component=SimpleTextComponent(text="resumed"),
+        )
+
     app.include_router(
         create_state_router(
             resolver=JwtUserResolver(SECRET),
@@ -61,6 +76,8 @@ def test_state_api_is_authenticated_and_user_scoped():
             query_plan_store=FakeQueryPlanStore(),
             clarification_service=clarification_service,
             context_store=context_store,
+            clarification_resume_mode="shadow",
+            resume_handler=resume_handler,
         )
     )
 
@@ -87,7 +104,7 @@ def test_state_api_is_authenticated_and_user_scoped():
     ).manifest
     asyncio.run(context_store.save_manifest(manifest))
     asyncio.run(
-        run_store.create(RunRecord("clarify-alice", "alice", None, "b" * 64))
+        run_store.create(RunRecord("clarify-alice", "alice", "conversation", "b" * 64))
     )
     asyncio.run(run_store.transition("clarify-alice", RunStatus.CONTEXT_BUILDING))
     asyncio.run(run_store.transition("clarify-alice", RunStatus.LINKING))
@@ -157,11 +174,24 @@ def test_state_api_is_authenticated_and_user_scoped():
     )
     assert clarified.status_code == 200
     assert clarified.json()["parent_run_id"] == "clarify-alice"
+    assert clarified.json()["resume_token"]
     assert client.post(
         "/api/runs/clarify-alice/clarify",
         headers={"Authorization": f"Bearer {token('bob')}"},
         json={"option_id": "paid"},
     ).status_code == 404
+    resumed = client.post(
+        f"/api/runs/{clarified.json()['child_run_id']}/resume",
+        headers=headers,
+        json={"token": clarified.json()["resume_token"]},
+    )
+    assert resumed.status_code == 200
+    assert "resumed" in resumed.text
+    assert client.post(
+        f"/api/runs/{clarified.json()['child_run_id']}/resume",
+        headers=headers,
+        json={"token": clarified.json()["resume_token"]},
+    ).status_code == 409
     assert client.post(
         "/api/runs/run-alice/cancel", headers=headers
     ).status_code == 200
