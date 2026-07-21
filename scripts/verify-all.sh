@@ -33,8 +33,8 @@ if [[ -x "$ROOT/business-service/mvnw" ]]; then
 elif command -v mvn >/dev/null 2>&1; then
   (cd "$ROOT/business-service" && mvn test)
 else
-  echo "[verify] Maven is not on PATH; using the Docker build stage (mvn package runs tests)"
-  "$ROOT/scripts/docker-compose.sh" build business-service
+  echo "[verify] Maven is not on PATH; building the Docker test stage (mvn package runs tests)"
+  docker build --target build -t enterprise-db-copilot-business-test "$ROOT/business-service"
 fi
 
 if [[ "${RUN_E2E:-0}" != "1" ]]; then

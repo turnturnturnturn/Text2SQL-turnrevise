@@ -28,6 +28,9 @@ ALLOWED_ATTRIBUTES = frozenset({
     "db_copilot.context_tokens", "db_copilot.grounding_coverage",
     "db_copilot.guard_decision", "db_copilot.failure_stage",
     "db_copilot.rollout_policy_version", "db_copilot.rollout_cohort",
+    "db_copilot.rollout_policy_key", "db_copilot.route_class",
+    "db_copilot.safety_execution", "db_copilot.cross_user_leak",
+    "db_copilot.provenance_missing",
 })
 
 

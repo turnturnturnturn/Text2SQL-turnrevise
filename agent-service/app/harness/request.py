@@ -116,12 +116,20 @@ class RequestHarness(Generic[T]):
     ) -> None:
         if self.trace_service is None:
             return
+        decision = current_rollout_decision()
         await self.trace_service.append(record.run_id, event_type, {
             "correlation_id": record.correlation_id,
             "tenant_id": "default",
             "route": "chat",
+            "risk_level": "LOW",
             "status": status,
             "harness_mode": effective_mode("context_harness", self.mode),
+            "db_copilot.route_class": "simple",
+            **({
+                "db_copilot.rollout_policy_key": decision.policy_key,
+                "db_copilot.rollout_policy_version": decision.policy_version,
+                "db_copilot.rollout_cohort": decision.cohort,
+            } if decision is not None else {}),
             **(extra or {}),
         })
 

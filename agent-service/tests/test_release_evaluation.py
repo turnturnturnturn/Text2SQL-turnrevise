@@ -36,3 +36,20 @@ def test_offline_release_report_separates_paths_and_ablations():
     serialized = json.dumps(report)
     assert "question" not in serialized.lower()
     assert "generated_sql" not in serialized.lower()
+
+
+def test_release_report_compares_recent_stable_release_without_raw_content():
+    release = load_release(ROOT / "evaluation/release_v1.json")
+    baseline = {
+        "release": "stable_v0",
+        "manifest_hash": "a" * 64,
+        "offline": {
+            "trusted_resolution_rate": 0.8,
+            "regression_strict_equivalence_rate": 1.0,
+        },
+    }
+    report = evaluate_release(release, live_model=False, baseline=baseline)
+    comparison = report["stable_comparison"]
+    assert comparison["baseline_release"] == "stable_v0"
+    assert comparison["trusted_resolution_rate_delta"] == 0.2
+    assert comparison["regression_strict_equivalence_rate_delta"] == 0.0

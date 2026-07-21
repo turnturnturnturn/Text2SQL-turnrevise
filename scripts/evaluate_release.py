@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 import uuid
@@ -106,7 +107,10 @@ def _safety_outcomes() -> dict[str, bool]:
     return outcomes
 
 
-def evaluate_release(release: dict[str, Any], *, live_model: bool = False) -> dict[str, Any]:
+def evaluate_release(
+    release: dict[str, Any], *, live_model: bool = False,
+    baseline: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     safety = _safety_outcomes()
     results = []
     for index, case in enumerate(release["cases"], 1):
@@ -132,7 +136,7 @@ def evaluate_release(release: dict[str, Any], *, live_model: bool = False) -> di
         mode: {"case_count": len(results), "answer_digest": answer_digest, "equivalence": 1.0}
         for mode in ("off", "shadow", "enforce")
     }
-    return {
+    report = {
         "release": release["release"],
         "suite_version": release["suite_version"],
         "manifest_hash": _digest(release),
@@ -148,6 +152,66 @@ def evaluate_release(release: dict[str, Any], *, live_model: bool = False) -> di
         "ablations": ablations,
         "results": results,
     }
+    if baseline is None:
+        report["stable_comparison"] = None
+    else:
+        current = report["offline"]
+        previous = baseline["offline"]
+        report["stable_comparison"] = {
+            "baseline_release": baseline["release"],
+            "baseline_manifest_hash": baseline["manifest_hash"],
+            "trusted_resolution_rate_delta": round(
+                current["trusted_resolution_rate"] - previous["trusted_resolution_rate"], 6
+            ),
+            "regression_strict_equivalence_rate_delta": round(
+                current["regression_strict_equivalence_rate"]
+                - previous["regression_strict_equivalence_rate"], 6
+            ),
+        }
+    return report
+
+
+def persist_redacted_report(
+    database_url: str, release: dict[str, Any], report: dict[str, Any]
+) -> None:
+    """Persist immutable hashes and outcomes only; never source content or SQL."""
+    import psycopg
+
+    with psycopg.connect(database_url) as conn, conn.transaction():
+        conn.execute(
+            """INSERT INTO agent_state.evaluation_releases
+               (release_name,manifest_hash,frozen_config,case_count)
+               VALUES (%s,%s,%s::jsonb,%s) ON CONFLICT (release_name) DO NOTHING""",
+            (release["release"], report["manifest_hash"],
+             json.dumps(release["frozen_config"]), len(release["cases"])),
+        )
+        stored = conn.execute(
+            """SELECT id,manifest_hash,case_count FROM agent_state.evaluation_releases
+               WHERE release_name=%s""", (release["release"],),
+        ).fetchone()
+        if stored is None or stored[1] != report["manifest_hash"] or stored[2] != len(release["cases"]):
+            raise ValueError("release name already exists with different immutable content")
+        release_id = stored[0]
+        for case, result in zip(release["cases"], report["results"], strict=True):
+            conn.execute(
+                """INSERT INTO agent_state.evaluation_cases
+                   (release_id,case_id,subset,case_hash,expected)
+                   VALUES (%s,%s,%s,%s,%s::jsonb)
+                   ON CONFLICT (release_id,case_id) DO NOTHING""",
+                (release_id, case["case_id"], case["subset"], _digest(case),
+                 json.dumps({"status": case["expected"]})),
+            )
+            conn.execute(
+                """INSERT INTO agent_state.evaluation_results
+                   (release_id,case_id,run_id,evaluation_path,status,evidence_hash,
+                    plan_hash,failure_stage,guard_decision,latency_ms,metrics)
+                   VALUES (%s,%s,NULL,'offline',%s,%s,%s,%s,%s,%s,%s::jsonb)
+                   ON CONFLICT (release_id,case_id,evaluation_path) DO NOTHING""",
+                (release_id, result["case_id"], result["status"],
+                 result["evidence_hash"], result["query_plan_hash"],
+                 result["failure_stage"], result["guard"], result["latency_ms"],
+                 json.dumps({"run_hash": _digest(result["run_id"])})),
+            )
 
 
 def enforce_release_gates(report: dict[str, Any]) -> None:
@@ -166,15 +230,22 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, default=ROOT / "evaluation/release_v1.json")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--database-url", default=os.getenv("AGENT_STATE_DATABASE_URL"))
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--live-model", action="store_true")
     args = parser.parse_args()
     release = load_release(args.manifest)
-    report = evaluate_release(release, live_model=args.live_model)
+    baseline = (
+        json.loads(args.baseline.read_text(encoding="utf-8")) if args.baseline else None
+    )
+    report = evaluate_release(release, live_model=args.live_model, baseline=baseline)
     if args.check:
         enforce_release_gates(report)
     if args.output:
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if args.database_url:
+        persist_redacted_report(args.database_url, release, report)
     print(
         f"Release gate passed: cases={len(report['results'])} "
         f"trusted={report['offline']['trusted_resolution_rate']:.3f} "

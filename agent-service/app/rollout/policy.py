@@ -132,6 +132,12 @@ class PostgresRolloutStore:
                      AND created_at >= now()-interval '15 minutes') AS samples,
                    count(*) FILTER (WHERE event_type='run_failed'
                      AND created_at >= now()-interval '15 minutes') AS errors,
+                   count(*) FILTER (WHERE attributes->>'db_copilot.safety_execution'='true'
+                     AND created_at >= now()-interval '15 minutes') AS safety_executions,
+                   count(*) FILTER (WHERE attributes->>'db_copilot.cross_user_leak'='true'
+                     AND created_at >= now()-interval '15 minutes') AS cross_user_leaks,
+                   count(*) FILTER (WHERE attributes->>'db_copilot.provenance_missing'='true'
+                     AND created_at >= now()-interval '15 minutes') AS provenance_missing,
                    count(*) FILTER (WHERE event_type IN ('run_completed','run_failed','run_cancelled')
                      AND created_at < now()-interval '15 minutes'
                      AND created_at >= now()-interval '30 minutes') AS baseline_samples,
@@ -141,8 +147,32 @@ class PostgresRolloutStore:
                    percentile_cont(.95) WITHIN GROUP (
                      ORDER BY NULLIF(attributes->>'duration_ms','')::double precision / 1000
                    ) FILTER (WHERE event_type='run_completed'
-                     AND created_at >= now()-interval '30 minutes') AS p95
+                     AND COALESCE(attributes->>'db_copilot.route_class','simple')='simple'
+                     AND created_at >= now()-interval '30 minutes') AS simple_p95,
+                   percentile_cont(.95) WITHIN GROUP (
+                     ORDER BY NULLIF(attributes->>'duration_ms','')::double precision / 1000
+                   ) FILTER (WHERE event_type='run_completed'
+                     AND attributes->>'db_copilot.route_class'='complex'
+                     AND created_at >= now()-interval '30 minutes') AS complex_p95
                    FROM agent_state.run_trace_events"""
+            )).fetchone()
+            affected_policy = await (await conn.execute(
+                """SELECT attributes->>'db_copilot.rollout_policy_key' AS policy_key,
+                          count(*) AS failures
+                   FROM agent_state.run_trace_events
+                   WHERE event_type='run_failed'
+                     AND created_at >= now()-interval '15 minutes'
+                     AND attributes ? 'db_copilot.rollout_policy_key'
+                   GROUP BY policy_key ORDER BY failures DESC,policy_key LIMIT 1"""
+            )).fetchone()
+            affected_route = await (await conn.execute(
+                """SELECT concat(COALESCE(attributes->>'route','chat'),':',
+                                  COALESCE(attributes->>'risk_level','LOW')) AS route_risk,
+                          max(NULLIF(attributes->>'duration_ms','')::double precision) AS duration
+                   FROM agent_state.run_trace_events
+                   WHERE event_type='run_completed'
+                     AND created_at >= now()-interval '30 minutes'
+                   GROUP BY route_risk ORDER BY duration DESC NULLS LAST LIMIT 1"""
             )).fetchone()
             closure = await (await conn.execute(
                 """SELECT count(*) FILTER (WHERE status IN ('COMPLETED','FAILED','CANCELLED','NEEDS_CLARIFICATION')) AS closed,
@@ -157,11 +187,17 @@ class PostgresRolloutStore:
         )
         closure_rate = closure["closed"] / closure["total"] if closure["total"] else 1.0
         return RolloutSignals(
+            safety_executions=row["safety_executions"],
+            cross_user_leaks=row["cross_user_leaks"],
             error_count=row["errors"], sample_count=row["samples"],
             baseline_error_rate=baseline_rate,
-            simple_p95_seconds=float(row["p95"] or 0),
+            simple_p95_seconds=float(row["simple_p95"] or 0),
+            complex_p95_seconds=float(row["complex_p95"] or 0),
             p95_breach_minutes=30,
+            provenance_missing=row["provenance_missing"],
             non_terminal_closure_rate=closure_rate,
+            affected_policy_key=(affected_policy or {}).get("policy_key"),
+            affected_route_risk=(affected_route or {}).get("route_risk"),
         )
 
 

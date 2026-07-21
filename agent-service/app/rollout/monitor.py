@@ -15,6 +15,8 @@ class RolloutSignals:
     p95_breach_minutes: int = 0
     provenance_missing: int = 0
     non_terminal_closure_rate: float = 1.0
+    affected_policy_key: str | None = None
+    affected_route_risk: str | None = None
 
 
 class RolloutMonitor:
@@ -47,7 +49,19 @@ class RolloutMonitor:
         if reason is None:
             return None
         policies = await self.service.list_policies()
-        active = [item for item in policies if item.active and item.scope_type == "global"]
+        if reason == "error_rate_regression":
+            active = [
+                item for item in policies
+                if item.active and item.policy_key == signals.affected_policy_key
+            ]
+        elif reason in {"simple_route_p95", "complex_route_p95"}:
+            active = [
+                item for item in policies
+                if item.active and item.scope_type == "route_risk"
+                and item.scope_value == signals.affected_route_risk
+            ]
+        else:
+            active = [item for item in policies if item.active and item.scope_type == "global"]
         if not active:
             return None
         target = max(active, key=lambda item: item.version)
