@@ -23,6 +23,7 @@ from app.grounding.context import get_grounding_state
 from app.harness.context import get_run_id
 from app.harness.models import RunStatus, TERMINAL_STATUSES
 from app.harness.store import RunStore
+from app.rollout.policy import effective_mode
 
 
 class SafeReadSqlTool(Tool[RunSqlToolArgs]):
@@ -56,6 +57,7 @@ class SafeReadSqlTool(Tool[RunSqlToolArgs]):
 
     async def execute(self, context: ToolContext, args: RunSqlToolArgs) -> ToolResult:
         try:
+            grounding_mode = effective_mode("grounding", self.grounding_mode)
             run_id = get_run_id()
             if run_id is not None and self.run_store is not None:
                 run = await self.run_store.get(run_id)
@@ -77,14 +79,14 @@ class SafeReadSqlTool(Tool[RunSqlToolArgs]):
             validated_plan = state.validated_plan if state else None
             bundle = state.bundle if state else None
             shadow_errors: list[str] = []
-            if self.grounding_mode == "enforce":
+            if grounding_mode == "enforce":
                 validate_sql_against_query_plan(
                     guarded.sql,
                     validated_plan,
                     bundle.snapshot if bundle else None,
                     bundle.catalog if bundle else None,
                 )
-            elif self.grounding_mode == "shadow" and bundle is not None:
+            elif grounding_mode == "shadow" and bundle is not None:
                 shadow_errors = query_plan_alignment_errors(
                     guarded.sql,
                     validated_plan,
@@ -93,7 +95,7 @@ class SafeReadSqlTool(Tool[RunSqlToolArgs]):
                 )
             if run_id is not None and self.trace_service is not None:
                 await self.trace_service.append(run_id, "guard_decided", {
-                    "grounding_mode": self.grounding_mode,
+                    "grounding_mode": grounding_mode,
                     "db_copilot.guard_decision": "allow",
                 })
             frame = await self.runner.run(guarded.sql)
@@ -123,7 +125,7 @@ class SafeReadSqlTool(Tool[RunSqlToolArgs]):
                     "tables": sorted(guarded.tables),
                     "row_count": len(records),
                     "columns": columns,
-                    "grounding_v2_mode": self.grounding_mode,
+                    "grounding_v2_mode": grounding_mode,
                     "query_plan_hash": (
                         validated_plan.plan_hash if validated_plan else None
                     ),

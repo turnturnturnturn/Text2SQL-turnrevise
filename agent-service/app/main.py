@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from vanna import Agent, AgentConfig
 from vanna.core.registry import ToolRegistry
 from vanna.servers.fastapi import VannaFastAPIServer
@@ -50,6 +53,8 @@ from app.evidence import EvidenceService
 from app.observability import MetricsRegistry, PostgresTraceStore, TraceService
 from app.observability.otel import OtelBridge
 from app.observability.vanna_provider import RedactedObservabilityProvider
+from app.rollout import PostgresRolloutStore, RolloutPolicyService
+from app.rollout.monitor import RolloutMonitor
 
 
 def create_llm():
@@ -115,6 +120,11 @@ observability_provider = RedactedObservabilityProvider(
     metrics_registry,
     OtelBridge(settings.otel_exporter_otlp_endpoint),
 )
+rollout_store = PostgresRolloutStore(settings.agent_state_database_url)
+rollout_service = RolloutPolicyService(rollout_store)
+rollout_monitor = RolloutMonitor(rollout_store, rollout_service)
+rollout_monitor_task = None
+logger = logging.getLogger(__name__)
 harness_budget = HarnessBudget(
     timeout_seconds=settings.harness_timeout_seconds,
     max_tool_calls=settings.harness_max_tool_calls,
@@ -126,6 +136,7 @@ request_harness = RequestHarness(
     budget=harness_budget,
     mode=settings.context_harness_v2_mode,
     trace_service=trace_service,
+    rollout_service=rollout_service,
 )
 user_resolver = JwtUserResolver(settings.jwt_secret)
 business_client = BusinessServiceClient(
@@ -255,7 +266,9 @@ server = VannaFastAPIServer(
         "api_base_url": "",
     },
 )
-server.chat_handler = CorrelatedChatHandler(agent)
+server.chat_handler = CorrelatedChatHandler(
+    agent, rollout_service, settings.rollout_policy_mode
+)
 app = server.create_app()
 app.include_router(
     create_state_router(
@@ -270,16 +283,38 @@ app.include_router(
         clarification_resume_mode=settings.clarification_resume_mode,
         resume_handler=resume_handler,
         trace_service=trace_service,
+        rollout_service=rollout_service,
+        business_client=business_client,
     )
 )
 
 
 @app.on_event("startup")
 async def recover_interrupted_harness_runs() -> None:
+    global rollout_monitor_task
     await request_harness.fail_incomplete_runs()
     await state_repository.delete_expired_conversations(
         settings.conversation_retention_days
     )
+    if settings.rollout_policy_mode != "off":
+        rollout_monitor_task = asyncio.create_task(_rollout_monitor_loop())
+
+
+async def _rollout_monitor_loop() -> None:
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await rollout_monitor.evaluate_once(await rollout_store.load_signals())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("phase d rollout monitor iteration failed")
+
+
+@app.on_event("shutdown")
+async def stop_rollout_monitor() -> None:
+    if rollout_monitor_task is not None:
+        rollout_monitor_task.cancel()
 
 
 @app.get("/app", response_class=HTMLResponse)

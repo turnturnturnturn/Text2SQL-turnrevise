@@ -10,6 +10,7 @@ from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
+from app.rollout.policy import effective_mode
 
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,8 @@ class TraceService:
     ) -> dict[str, Any] | None:
         if event_type not in TRACE_EVENTS:
             raise ValueError("unsupported trace event type")
-        if self.mode == "off":
+        mode = effective_mode("otel", self.mode)
+        if mode == "off":
             return None
         safe = {key: value for key, value in attributes.items() if key in ALLOWED_ATTRIBUTES}
         status = str(safe.get("status", ""))
@@ -153,6 +155,14 @@ class TraceService:
                     )
                 elif event_type == "clarification_requested":
                     self.metrics.increment_clarification("ambiguity", "requested")
+                elif event_type == "run_completed" and "duration_ms" in safe:
+                    self.metrics.observe_run(
+                        float(safe["duration_ms"]) / 1000,
+                        route=str(safe.get("route", "chat")),
+                        risk=str(safe.get("risk_level", "LOW")),
+                        status=str(safe.get("status", "COMPLETED")),
+                        mode=mode,
+                    )
                 if "db_copilot.grounding_coverage" in safe:
                     self.metrics.observe_grounding(
                         safe["db_copilot.grounding_coverage"], "all", str(safe.get("schema_version", "current"))
@@ -160,7 +170,7 @@ class TraceService:
             return stored
         except Exception as exc:
             logger.exception("local redacted trace persistence failed")
-            if self.mode == "enforce":
+            if mode == "enforce":
                 raise TracePersistenceError("local trace persistence failed") from exc
             return None
 

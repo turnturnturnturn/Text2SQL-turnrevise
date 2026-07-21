@@ -16,6 +16,7 @@ from app.harness.clarification import (
     MaterialAmbiguity,
 )
 from app.harness.context import get_run_id
+from app.rollout.policy import effective_mode
 
 
 JOIN_HINTS = (
@@ -84,10 +85,11 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
         self, context: ToolContext, args: SearchSchemaKnowledgeArgs
     ) -> ToolResult:
         try:
+            grounding_mode = effective_mode("grounding", self.grounding_mode)
             bundle = None
             grounding_warning = None
             clarification_card = None
-            if self.grounding_mode == "enforce":
+            if grounding_mode == "enforce":
                 if self.grounding_service is None:
                     raise RuntimeError("Grounding v2 service is not configured")
                 bundle = await asyncio.to_thread(self.grounding_service.search, args.query)
@@ -131,7 +133,7 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
                         f"- {hint}" for hint in join_hints
                     )
                 source_ids = [document.document_id for document in outcome.documents]
-                if self.grounding_mode == "shadow" and self.grounding_service is not None:
+                if grounding_mode == "shadow" and self.grounding_service is not None:
                     try:
                         bundle = await asyncio.to_thread(self.grounding_service.search, args.query)
                         record_grounding(bundle)
@@ -142,7 +144,7 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
             run_id = get_run_id()
             if bundle is not None and run_id is not None and self.trace_service is not None:
                 attrs = {
-                    "grounding_mode": self.grounding_mode,
+                    "grounding_mode": grounding_mode,
                     "db_copilot.grounding_coverage": bundle.snapshot.confidence,
                 }
                 await self.trace_service.append(run_id, "schema_linked", attrs)
@@ -173,7 +175,7 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
                     "vector_hits": 0 if outcome is None else outcome.vector_hits,
                     "source_ids": source_ids,
                     "join_hints": join_hints,
-                    "grounding_v2_mode": self.grounding_mode,
+                    "grounding_v2_mode": grounding_mode,
                     "grounding_v2": grounding_metadata,
                     "grounding_v2_warning": grounding_warning,
                     "clarification_required": clarification_card is not None,

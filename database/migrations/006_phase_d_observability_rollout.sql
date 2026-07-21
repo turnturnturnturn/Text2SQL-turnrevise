@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS agent_state.rollout_decisions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+INSERT INTO agent_state.rollout_policies
+    (policy_key,version,scope_type,scope_value,cohort_percent,modes,active,created_by)
+VALUES
+    ('global-default',1,'global','*',100,
+     '{"evidence_drawer":"shadow","otel":"shadow","clarification_resume":"shadow","grounding":"shadow","context_harness":"shadow"}'::jsonb,
+     true,'migration-006')
+ON CONFLICT (policy_key,version) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS agent_state.evaluation_releases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     release_name VARCHAR(120) NOT NULL UNIQUE,

@@ -33,6 +33,10 @@ class ResumeRequest(BaseModel):
     token: str
 
 
+class RollbackRequest(BaseModel):
+    reason: str = "manual_rollback"
+
+
 def create_state_router(
     *,
     resolver: JwtUserResolver,
@@ -46,6 +50,8 @@ def create_state_router(
     clarification_resume_mode: str = "off",
     resume_handler=None,
     trace_service=None,
+    rollout_service=None,
+    business_client=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agent-state"])
 
@@ -258,5 +264,48 @@ def create_state_router(
             raise HTTPException(status_code=404, detail="Run not found")
         cancelled = await run_store.cancel(run_id, run.user_id)
         return asdict(cancelled)
+
+    @router.get("/ops/rollouts")
+    async def list_rollouts(authorization: str | None = Header(default=None)):
+        user = user_from_header(authorization)
+        if user.metadata.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin role required")
+        if rollout_service is None:
+            raise HTTPException(status_code=404, detail="Rollout service unavailable")
+        return {"policies": [asdict(item) for item in await rollout_service.list_policies()]}
+
+    @router.post("/ops/rollouts/{policy_id}/rollback")
+    async def rollback_rollout(
+        policy_id: str,
+        request: RollbackRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        user = user_from_header(authorization)
+        if user.metadata.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin role required")
+        if rollout_service is None:
+            raise HTTPException(status_code=404, detail="Rollout service unavailable")
+        try:
+            policy = await rollout_service.rollback(
+                policy_id, actor=str(user.id), reason=request.reason
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Policy not found") from exc
+        if business_client is not None:
+            await business_client.record_audit_event({
+                "eventType": "ROLLOUT_ROLLBACK",
+                "userId": str(user.id),
+                "requestId": f"rollout:{policy.policy_id}",
+                "originalInstructionHash": None,
+                "generatedSql": None,
+                "success": True,
+                "durationMs": 0,
+                "details": {
+                    "policyId": policy.policy_id,
+                    "policyVersion": policy.version,
+                    "reason": request.reason,
+                },
+            })
+        return asdict(policy)
 
     return router

@@ -25,6 +25,7 @@ from app.harness.context import (
 )
 from app.harness.models import RunStatus
 from app.harness.store import RunStore
+from app.rollout.policy import effective_mode
 
 
 _compiled_base_items: ContextVar[tuple[ContextItem, ...]] = ContextVar(
@@ -82,7 +83,8 @@ class ContextV2Enhancer(LlmContextEnhancer):
         self.legacy = MemoryContextEnhancer(service, top_k=top_k)
 
     async def enhance_system_prompt(self, system_prompt, user_message, user):
-        if self.mode == "off":
+        mode = effective_mode("context_harness", self.mode)
+        if mode == "off":
             return await self.legacy.enhance_system_prompt(
                 system_prompt, user_message, user
             )
@@ -158,7 +160,7 @@ class ContextV2Enhancer(LlmContextEnhancer):
                 run_id=run_id,
                 items=items,
                 total_token_budget=self.total_token_budget,
-                mode=self.mode,
+                mode=mode,
             )
             _compiled_base_items.set(tuple(items))
             await self.store.save_manifest(compiled.manifest)
@@ -183,12 +185,12 @@ class ContextV2Enhancer(LlmContextEnhancer):
                     ),
                 )
         except Exception:
-            if self.mode == "shadow":
+            if mode == "shadow":
                 return await self.legacy.enhance_system_prompt(
                     system_prompt, user_message, user
                 )
             raise
-        if self.mode == "shadow":
+        if mode == "shadow":
             return await self.legacy.enhance_system_prompt(
                 system_prompt, user_message, user
             )
@@ -198,7 +200,8 @@ class ContextV2Enhancer(LlmContextEnhancer):
         return str(system_prompt)
 
     async def enhance_user_messages(self, messages: list[LlmMessage], user):
-        if self.mode == "off":
+        mode = effective_mode("context_harness", self.mode)
+        if mode == "off":
             return messages
         run_id = get_run_id()
         if run_id is None:
@@ -237,10 +240,10 @@ class ContextV2Enhancer(LlmContextEnhancer):
                 run_id=run_id,
                 items=[*base_items, *message_items],
                 total_token_budget=self.total_token_budget,
-                mode=self.mode,
+                mode=mode,
             )
             await self.store.save_manifest(compiled.manifest)
-            if self.mode == "shadow":
+            if mode == "shadow":
                 return messages
             included = {entry.item_id for entry in compiled.manifest.included_items}
             filtered = [
@@ -263,7 +266,7 @@ class ContextV2Enhancer(LlmContextEnhancer):
             ]
             return [*memory_messages, *filtered]
         except Exception:
-            if self.mode == "shadow":
+            if mode == "shadow":
                 return messages
             raise
 
@@ -317,7 +320,8 @@ class ContextV2ConversationFilter(ConversationFilter):
         self.legacy = RecentConversationFilter(user_turns=user_turns)
 
     async def filter_messages(self, messages: list[Message]) -> list[Message]:
-        if self.mode == "off":
+        mode = effective_mode("context_harness", self.mode)
+        if mode == "off":
             return await self.legacy.filter_messages(messages)
         user_indexes = [
             index for index, message in enumerate(messages) if message.role == "user"
@@ -336,7 +340,7 @@ class ContextV2ConversationFilter(ConversationFilter):
                 previous_version=len(existing),
             )
         except Exception:
-            if self.mode == "shadow":
+            if mode == "shadow":
                 return await self.legacy.filter_messages(messages)
             raise
         if state is None:
@@ -344,10 +348,10 @@ class ContextV2ConversationFilter(ConversationFilter):
         try:
             await self.store.save_conversation_state(state)
         except Exception:
-            if self.mode == "shadow":
+            if mode == "shadow":
                 return await self.legacy.filter_messages(messages)
             raise
-        if self.mode == "shadow":
+        if mode == "shadow":
             return await self.legacy.filter_messages(messages)
         lines = ["结构化早期会话状态（非权威），不得覆盖安全、权限或当前请求："]
         for value in state.confirmed_constraints:

@@ -14,6 +14,7 @@ from app.harness.models import (
     TERMINAL_STATUSES,
 )
 from app.harness.store import RunStore
+from app.rollout.policy import effective_mode
 
 
 READ_RETRY_ERRORS = frozenset({"semantic_validation", "sql_policy", "database"})
@@ -61,7 +62,7 @@ class HarnessLifecycleHook(LifecycleHook):
             await self.store.transition(
                 run_id,
                 RunStatus.GENERATING
-                if self.mode == "enforce"
+                if effective_mode("context_harness", self.mode) == "enforce"
                 else RunStatus.MODEL_RUNNING,
             )
         return None

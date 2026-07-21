@@ -18,6 +18,8 @@ from app.state.api import create_state_router
 from app.context_v2 import ContextCompiler, ContextItem, ContextPartition
 from app.context_v2.store import InMemoryContextStore
 from app.observability.trace import InMemoryTraceStore, TraceService
+from app.rollout.models import FEATURES, RolloutPolicy
+from app.rollout.policy import InMemoryRolloutStore, RolloutPolicyService
 
 
 SECRET = "state-api-test-secret-that-is-at-least-32-characters"
@@ -54,6 +56,13 @@ def test_state_api_is_authenticated_and_user_scoped():
     )
     context_store = InMemoryContextStore()
     trace_service = TraceService(InMemoryTraceStore())
+    rollout_service = RolloutPolicyService(InMemoryRolloutStore([
+        RolloutPolicy(
+            policy_id="global-policy", policy_key="global", version=1,
+            scope_type="global", scope_value="*", cohort_percent=100,
+            modes={name: "shadow" for name in FEATURES}, created_by="test",
+        )
+    ]))
 
     class FakeQueryPlanStore:
         async def list_for_run(self, run_id):
@@ -81,6 +90,7 @@ def test_state_api_is_authenticated_and_user_scoped():
             clarification_resume_mode="shadow",
             resume_handler=resume_handler,
             trace_service=trace_service,
+            rollout_service=rollout_service,
         )
     )
 
@@ -211,3 +221,13 @@ def test_state_api_is_authenticated_and_user_scoped():
     assert client.post(
         "/api/runs/run-alice/cancel", headers=headers
     ).json()["status"] == "CANCELLED"
+    assert client.get("/api/ops/rollouts", headers=headers).status_code == 403
+    admin_headers = {"Authorization": f"Bearer {token('admin-user', 'admin')}"}
+    assert client.get("/api/ops/rollouts", headers=admin_headers).status_code == 200
+    rolled = client.post(
+        "/api/ops/rollouts/global-policy/rollback",
+        headers=admin_headers,
+        json={"reason": "drill"},
+    )
+    assert rolled.status_code == 200
+    assert rolled.json()["version"] == 2

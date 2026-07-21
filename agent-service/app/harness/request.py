@@ -22,9 +22,11 @@ from app.harness.models import (
     RunRecord,
     RunStatus,
     TERMINAL_STATUSES,
+    utc_now,
 )
 from app.harness.store import InMemoryRunStore, RunStore
 from app.runtime.correlation import current_run_id
+from app.rollout.policy import current_rollout_decision, effective_mode
 
 
 T = TypeVar("T")
@@ -98,6 +100,7 @@ class RequestHarness(Generic[T]):
         budget: HarnessBudget | None = None,
         mode: str = "shadow",
         trace_service=None,
+        rollout_service=None,
     ) -> None:
         if mode not in {"off", "shadow", "enforce"}:
             raise ValueError("mode must be off, shadow, or enforce")
@@ -105,8 +108,12 @@ class RequestHarness(Generic[T]):
         self.budget = budget or HarnessBudget()
         self.mode = mode
         self.trace_service = trace_service
+        self.rollout_service = rollout_service
 
-    async def _trace(self, record: RunRecord, event_type: str, status: str) -> None:
+    async def _trace(
+        self, record: RunRecord, event_type: str, status: str,
+        extra: dict | None = None,
+    ) -> None:
         if self.trace_service is None:
             return
         await self.trace_service.append(record.run_id, event_type, {
@@ -114,7 +121,8 @@ class RequestHarness(Generic[T]):
             "tenant_id": "default",
             "route": "chat",
             "status": status,
-            "harness_mode": self.mode,
+            "harness_mode": effective_mode("context_harness", self.mode),
+            **(extra or {}),
         })
 
     async def execute_stream(
@@ -142,9 +150,13 @@ class RequestHarness(Generic[T]):
         run = HarnessRun(run_id, self.store, self.budget)
         try:
             await self.store.create(record)
+            decision = current_rollout_decision()
+            if decision is not None and self.rollout_service is not None:
+                await self.rollout_service.persist(run_id, decision)
             await self._trace(record, "request_received", RunStatus.RECEIVED.value)
             async with asyncio.timeout(self.budget.timeout_seconds):
-                if self.mode == "enforce":
+                mode = effective_mode("context_harness", self.mode)
+                if mode == "enforce":
                     for stage, event_type in (
                         (RunStatus.CONTEXT_BUILDING, "context_compiled"),
                         (RunStatus.LINKING, "schema_linked"),
@@ -166,7 +178,7 @@ class RequestHarness(Generic[T]):
                 ):
                     await self._trace(record, "clarification_requested", RunStatus.NEEDS_CLARIFICATION.value)
                     return
-                if self.mode == "enforce" and current is not None:
+                if mode == "enforce" and current is not None:
                     if current.status == RunStatus.GENERATING:
                         await self.store.transition(run_id, RunStatus.VALIDATING)
                         await self._trace(record, "guard_decided", RunStatus.VALIDATING.value)
@@ -177,7 +189,13 @@ class RequestHarness(Generic[T]):
                     await self.store.transition(run_id, RunStatus.VERIFYING)
                 await self.store.transition(run_id, RunStatus.COMPLETED)
                 await self._trace(record, "result_verified", RunStatus.VERIFYING.value)
-                await self._trace(record, "run_completed", RunStatus.COMPLETED.value)
+                duration_ms = max(
+                    0, round((utc_now() - record.created_at).total_seconds() * 1000)
+                )
+                await self._trace(
+                    record, "run_completed", RunStatus.COMPLETED.value,
+                    {"duration_ms": duration_ms},
+                )
         except HarnessPausedForClarification:
             current = await self.store.get(run_id)
             if current is None or current.status != RunStatus.NEEDS_CLARIFICATION:

@@ -25,6 +25,7 @@ from app.evidence import build_evidence_artifact
 from app.runtime.correlation import current_run_id
 from app.harness.context import reset_resume_evidence, set_resume_evidence
 from app.harness.models import RunRecord
+from app.rollout.policy import effective_mode
 
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,7 @@ class AuditedAgent(Agent):
         ):
             yield component
         run_id = current_run_id()
-        if self.evidence_drawer_mode != "off" and run_id:
+        if effective_mode("evidence_drawer", self.evidence_drawer_mode) != "off" and run_id:
             yield build_evidence_artifact(run_id)
 
     async def resume_message(
@@ -178,7 +179,7 @@ class AuditedAgent(Agent):
                 operation=operation,
             ):
                 yield component
-            if self.evidence_drawer_mode != "off":
+            if effective_mode("evidence_drawer", self.evidence_drawer_mode) != "off":
                 yield build_evidence_artifact(child.run_id)
         finally:
             reset_resume_evidence(evidence_token)
