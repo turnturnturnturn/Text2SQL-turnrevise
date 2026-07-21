@@ -13,6 +13,7 @@ htmlcov/
 .mypy_cache/
 .hypothesis/
 .cache/
+.worktrees/
 evaluation/reports/
 *.pyc
 *.log
