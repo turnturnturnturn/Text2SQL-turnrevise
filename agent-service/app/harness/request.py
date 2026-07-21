@@ -22,6 +22,7 @@ from app.harness.models import (
     TERMINAL_STATUSES,
 )
 from app.harness.store import InMemoryRunStore, RunStore
+from app.runtime.correlation import current_run_id
 
 
 T = TypeVar("T")
@@ -110,7 +111,7 @@ class RequestHarness(Generic[T]):
         operation: Callable[[HarnessRun], AsyncIterator[T]],
         operation_kind: OperationKind | None = None,
     ) -> AsyncIterator[T]:
-        run_id = str(uuid.uuid4())
+        run_id = current_run_id() or str(uuid.uuid4())
         tokens = bind_request_context(
             run_id, instruction, conversation_id=conversation_id
         )

@@ -44,6 +44,7 @@ from app.tools import (
 )
 from app.workflow import ActionWorkflowHandler
 from app.ui import login_shell
+from app.runtime import CorrelatedChatHandler
 
 
 def create_llm():
@@ -210,6 +211,7 @@ server = VannaFastAPIServer(
         "api_base_url": "",
     },
 )
+server.chat_handler = CorrelatedChatHandler(agent)
 app = server.create_app()
 app.include_router(
     create_state_router(

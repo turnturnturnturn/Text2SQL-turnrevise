@@ -56,6 +56,28 @@ class Settings:
     context_harness_v2_mode: str = _choice(
         "CONTEXT_HARNESS_V2_MODE", "shadow", frozenset({"off", "shadow", "enforce"})
     )
+    evidence_drawer_mode: str = _choice(
+        "EVIDENCE_DRAWER_MODE", "shadow", frozenset({"off", "shadow", "enforce"})
+    )
+    otel_mode: str = _choice(
+        "OTEL_MODE", "shadow", frozenset({"off", "shadow", "enforce"})
+    )
+    clarification_resume_mode: str = _choice(
+        "CLARIFICATION_RESUME_MODE",
+        "shadow",
+        frozenset({"off", "shadow", "enforce"}),
+    )
+    rollout_policy_mode: str = _choice(
+        "ROLLOUT_POLICY_MODE", "shadow", frozenset({"off", "shadow", "enforce"})
+    )
+    otel_exporter_otlp_endpoint: str | None = (
+        os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or None
+    )
+    trace_success_sample_rate: float = float(
+        os.getenv("TRACE_SUCCESS_SAMPLE_RATE", "0.05")
+    )
+    trace_retention_days: int = int(os.getenv("TRACE_RETENTION_DAYS", "30"))
+    metric_retention_days: int = int(os.getenv("METRIC_RETENTION_DAYS", "90"))
     context_token_budget: int = int(os.getenv("CONTEXT_TOKEN_BUDGET", "8192"))
     clarification_ttl_seconds: int = int(
         os.getenv("CLARIFICATION_TTL_SECONDS", "900")
