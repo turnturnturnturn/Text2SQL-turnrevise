@@ -33,6 +33,7 @@ class SafeReadSqlTool(Tool[RunSqlToolArgs]):
         *,
         grounding_mode: str = "off",
         run_store: RunStore | None = None,
+        trace_service=None,
     ):
         if grounding_mode not in {"off", "shadow", "enforce"}:
             raise ValueError("GROUNDING_V2_MODE must be off, shadow or enforce")
@@ -40,6 +41,7 @@ class SafeReadSqlTool(Tool[RunSqlToolArgs]):
         self.max_rows = max_rows
         self.grounding_mode = grounding_mode
         self.run_store = run_store
+        self.trace_service = trace_service
 
     @property
     def name(self) -> str:
@@ -89,10 +91,19 @@ class SafeReadSqlTool(Tool[RunSqlToolArgs]):
                     bundle.snapshot,
                     bundle.catalog,
                 )
+            if run_id is not None and self.trace_service is not None:
+                await self.trace_service.append(run_id, "guard_decided", {
+                    "grounding_mode": self.grounding_mode,
+                    "db_copilot.guard_decision": "allow",
+                })
             frame = await self.runner.run(guarded.sql)
             records = frame.to_dict("records")
             validate_result_intent(records, get_current_instruction())
             columns = frame.columns.tolist()
+            if run_id is not None and self.trace_service is not None:
+                await self.trace_service.append(run_id, "sql_executed", {
+                    "status": "success", "count": len(records)
+                })
             text = frame.to_csv(index=False)
             return ToolResult(
                 success=True,
@@ -124,6 +135,11 @@ class SafeReadSqlTool(Tool[RunSqlToolArgs]):
             QueryResultIntentError,
             QueryPlanAlignmentError,
         ) as exc:
+            if get_run_id() is not None and self.trace_service is not None:
+                await self.trace_service.append(get_run_id(), "guard_decided", {
+                    "db_copilot.guard_decision": "reject",
+                    "db_copilot.failure_stage": "semantic_validation",
+                })
             return ToolResult(
                 success=False,
                 result_for_llm=f"Execution-guided semantic validation rejected the result: {exc}",
@@ -131,6 +147,11 @@ class SafeReadSqlTool(Tool[RunSqlToolArgs]):
                 metadata={"error_type": "semantic_validation"},
             )
         except SqlPolicyError as exc:
+            if get_run_id() is not None and self.trace_service is not None:
+                await self.trace_service.append(get_run_id(), "guard_decided", {
+                    "db_copilot.guard_decision": "reject",
+                    "db_copilot.failure_stage": "sql_policy",
+                })
             return ToolResult(
                 success=False,
                 result_for_llm=f"SQL policy rejected the query: {exc}",

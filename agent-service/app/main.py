@@ -3,7 +3,7 @@ from __future__ import annotations
 from vanna import Agent, AgentConfig
 from vanna.core.registry import ToolRegistry
 from vanna.servers.fastapi import VannaFastAPIServer
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from vanna.core.user import RequestContext
 
 from app.business_client import BusinessServiceClient
@@ -47,6 +47,9 @@ from app.workflow import ActionWorkflowHandler
 from app.ui import login_shell
 from app.runtime import CorrelatedChatHandler
 from app.evidence import EvidenceService
+from app.observability import MetricsRegistry, PostgresTraceStore, TraceService
+from app.observability.otel import OtelBridge
+from app.observability.vanna_provider import RedactedObservabilityProvider
 
 
 def create_llm():
@@ -100,6 +103,18 @@ clarification_service = ClarificationService(
     clarification_store,
     ttl_seconds=settings.clarification_ttl_seconds,
 )
+metrics_registry = MetricsRegistry()
+trace_service = TraceService(
+    PostgresTraceStore(settings.agent_state_database_url),
+    mode=settings.otel_mode,
+    success_sample_rate=settings.trace_success_sample_rate,
+    metrics=metrics_registry,
+)
+observability_provider = RedactedObservabilityProvider(
+    trace_service,
+    metrics_registry,
+    OtelBridge(settings.otel_exporter_otlp_endpoint),
+)
 harness_budget = HarnessBudget(
     timeout_seconds=settings.harness_timeout_seconds,
     max_tool_calls=settings.harness_max_tool_calls,
@@ -110,6 +125,7 @@ request_harness = RequestHarness(
     run_store,
     budget=harness_budget,
     mode=settings.context_harness_v2_mode,
+    trace_service=trace_service,
 )
 user_resolver = JwtUserResolver(settings.jwt_secret)
 business_client = BusinessServiceClient(
@@ -136,6 +152,7 @@ def create_agent() -> Agent:
             grounding_mode=settings.grounding_v2_mode,
             context_harness_mode=settings.context_harness_v2_mode,
             clarification_service=clarification_service,
+            trace_service=trace_service,
         ),
         access_groups=["analyst", "operator", "admin"],
     )
@@ -145,6 +162,7 @@ def create_agent() -> Agent:
                 QueryPlanValidator(),
                 store=query_plan_store,
                 grounding_mode=settings.grounding_v2_mode,
+                trace_service=trace_service,
             ),
             access_groups=["analyst", "operator", "admin"],
         )
@@ -154,6 +172,7 @@ def create_agent() -> Agent:
             max_rows=settings.max_query_rows,
             grounding_mode=settings.grounding_v2_mode,
             run_store=run_store,
+            trace_service=trace_service,
         ),
         access_groups=["analyst", "operator", "admin"],
     )
@@ -203,6 +222,7 @@ def create_agent() -> Agent:
         ),
         request_harness=request_harness,
         evidence_drawer_mode=settings.evidence_drawer_mode,
+        observability_provider=observability_provider,
     )
 
 
@@ -249,6 +269,7 @@ app.include_router(
         evidence_service=evidence_service,
         clarification_resume_mode=settings.clarification_resume_mode,
         resume_handler=resume_handler,
+        trace_service=trace_service,
     )
 )
 
@@ -264,3 +285,8 @@ async def recover_interrupted_harness_runs() -> None:
 @app.get("/app", response_class=HTMLResponse)
 async def copilot_app() -> str:
     return login_shell(settings.public_business_service_url)
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def metrics() -> str:
+    return metrics_registry.render()

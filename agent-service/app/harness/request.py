@@ -97,12 +97,25 @@ class RequestHarness(Generic[T]):
         *,
         budget: HarnessBudget | None = None,
         mode: str = "shadow",
+        trace_service=None,
     ) -> None:
         if mode not in {"off", "shadow", "enforce"}:
             raise ValueError("mode must be off, shadow, or enforce")
         self.store = store or InMemoryRunStore()
         self.budget = budget or HarnessBudget()
         self.mode = mode
+        self.trace_service = trace_service
+
+    async def _trace(self, record: RunRecord, event_type: str, status: str) -> None:
+        if self.trace_service is None:
+            return
+        await self.trace_service.append(record.run_id, event_type, {
+            "correlation_id": record.correlation_id,
+            "tenant_id": "default",
+            "route": "chat",
+            "status": status,
+            "harness_mode": self.mode,
+        })
 
     async def execute_stream(
         self,
@@ -129,17 +142,20 @@ class RequestHarness(Generic[T]):
         run = HarnessRun(run_id, self.store, self.budget)
         try:
             await self.store.create(record)
+            await self._trace(record, "request_received", RunStatus.RECEIVED.value)
             async with asyncio.timeout(self.budget.timeout_seconds):
                 if self.mode == "enforce":
-                    for stage in (
-                        RunStatus.CONTEXT_BUILDING,
-                        RunStatus.LINKING,
-                        RunStatus.PLANNING,
-                        RunStatus.GENERATING,
+                    for stage, event_type in (
+                        (RunStatus.CONTEXT_BUILDING, "context_compiled"),
+                        (RunStatus.LINKING, "schema_linked"),
+                        (RunStatus.PLANNING, "plan_validated"),
+                        (RunStatus.GENERATING, "sql_generated"),
                     ):
                         await self.store.transition(run_id, stage)
+                        await self._trace(record, event_type, stage.value)
                 else:
                     await self.store.transition(run_id, RunStatus.CONTEXT_READY)
+                    await self._trace(record, "context_compiled", RunStatus.CONTEXT_READY.value)
                     await self.store.transition(run_id, RunStatus.MODEL_RUNNING)
                 async for item in operation(run):
                     yield item
@@ -148,19 +164,25 @@ class RequestHarness(Generic[T]):
                     current is not None
                     and current.status == RunStatus.NEEDS_CLARIFICATION
                 ):
+                    await self._trace(record, "clarification_requested", RunStatus.NEEDS_CLARIFICATION.value)
                     return
                 if self.mode == "enforce" and current is not None:
                     if current.status == RunStatus.GENERATING:
                         await self.store.transition(run_id, RunStatus.VALIDATING)
+                        await self._trace(record, "guard_decided", RunStatus.VALIDATING.value)
                         await self.store.transition(run_id, RunStatus.EXECUTING)
+                        await self._trace(record, "sql_executed", RunStatus.EXECUTING.value)
                         await self.store.transition(run_id, RunStatus.VERIFYING)
                 elif current is not None and current.status != RunStatus.VERIFYING:
                     await self.store.transition(run_id, RunStatus.VERIFYING)
                 await self.store.transition(run_id, RunStatus.COMPLETED)
+                await self._trace(record, "result_verified", RunStatus.VERIFYING.value)
+                await self._trace(record, "run_completed", RunStatus.COMPLETED.value)
         except HarnessPausedForClarification:
             current = await self.store.get(run_id)
             if current is None or current.status != RunStatus.NEEDS_CLARIFICATION:
                 raise
+            await self._trace(record, "clarification_requested", RunStatus.NEEDS_CLARIFICATION.value)
             return
         except TimeoutError:
             await self._finish_failed(run_id, "timeout")
@@ -234,6 +256,7 @@ class RequestHarness(Generic[T]):
             await self.store.transition(
                 run_id, RunStatus.FAILED, failure_type=failure_type
             )
+            await self._trace(record, "run_failed", RunStatus.FAILED.value)
 
     async def _finish_cancelled(self, run_id: str) -> None:
         record = await self.store.get(run_id)
@@ -241,3 +264,4 @@ class RequestHarness(Generic[T]):
             await self.store.transition(
                 run_id, RunStatus.CANCELLED, failure_type="cancelled"
             )
+            await self._trace(record, "run_cancelled", RunStatus.CANCELLED.value)

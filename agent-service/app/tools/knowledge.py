@@ -47,6 +47,7 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
         grounding_mode: str = "off",
         context_harness_mode: str = "shadow",
         clarification_service: ClarificationService | None = None,
+        trace_service=None,
     ):
         if grounding_mode not in {"off", "shadow", "enforce"}:
             raise ValueError("GROUNDING_V2_MODE must be off, shadow or enforce")
@@ -66,6 +67,7 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
             raise ValueError("CONTEXT_HARNESS_V2_MODE must be off, shadow or enforce")
         self.context_harness_mode = context_harness_mode
         self.clarification_service = clarification_service
+        self.trace_service = trace_service
 
     @property
     def name(self) -> str:
@@ -137,6 +139,16 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
                         grounding_warning = type(exc).__name__
 
             grounding_metadata = bundle.snapshot.to_safe_dict() if bundle else None
+            run_id = get_run_id()
+            if bundle is not None and run_id is not None and self.trace_service is not None:
+                attrs = {
+                    "grounding_mode": self.grounding_mode,
+                    "db_copilot.grounding_coverage": bundle.snapshot.confidence,
+                }
+                await self.trace_service.append(run_id, "schema_linked", attrs)
+                await self.trace_service.append(run_id, "value_linked", {
+                    **attrs, "count": len(bundle.snapshot.value_candidates)
+                })
             return ToolResult(
                 success=True,
                 result_for_llm=content,

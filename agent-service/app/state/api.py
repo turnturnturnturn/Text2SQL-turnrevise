@@ -45,6 +45,7 @@ def create_state_router(
     evidence_service: EvidenceService | None = None,
     clarification_resume_mode: str = "off",
     resume_handler=None,
+    trace_service=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agent-state"])
 
@@ -228,6 +229,23 @@ def create_state_router(
         if manifest is None:
             raise HTTPException(status_code=404, detail="Context manifest not found")
         return manifest
+
+    @router.get("/runs/{run_id}/trace")
+    async def get_run_trace(
+        run_id: str, authorization: str | None = Header(default=None)
+    ):
+        user = user_from_header(authorization)
+        run = await run_store.get(run_id)
+        is_admin = user.metadata.get("role") == "admin"
+        if run is None or (run.user_id != str(user.id) and not is_admin):
+            raise HTTPException(status_code=404, detail="Run not found")
+        if trace_service is None:
+            raise HTTPException(status_code=404, detail="Trace not available")
+        return {
+            "run_id": run_id,
+            "correlation_id": run.correlation_id,
+            "events": await trace_service.list_events(run_id),
+        }
 
     @router.post("/runs/{run_id}/cancel")
     async def cancel_run(

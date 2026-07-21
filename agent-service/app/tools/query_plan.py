@@ -26,12 +26,14 @@ class ValidateQueryPlanTool(Tool[QueryPlanDraft]):
         *,
         store: QueryPlanStore | None = None,
         grounding_mode: str = "off",
+        trace_service=None,
     ) -> None:
         if grounding_mode not in {"off", "shadow", "enforce"}:
             raise ValueError("GROUNDING_V2_MODE must be off, shadow or enforce")
         self.validator = validator
         self.store = store
         self.grounding_mode = grounding_mode
+        self.trace_service = trace_service
 
     @property
     def name(self) -> str:
@@ -93,6 +95,12 @@ class ValidateQueryPlanTool(Tool[QueryPlanDraft]):
                     )
                 persistence_warning = type(exc).__name__
         record_validated_plan(validated)
+        if run_id is not None and self.trace_service is not None:
+            await self.trace_service.append(run_id, "plan_validated", {
+                "grounding_mode": self.grounding_mode,
+                "status": validated.status.value,
+                "db_copilot.grounding_coverage": validated.confidence,
+            })
 
         payload = {
             "status": validated.status.value,
