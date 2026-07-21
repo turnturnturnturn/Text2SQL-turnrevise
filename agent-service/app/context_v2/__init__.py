@@ -15,6 +15,7 @@ from app.context_v2.models import (
     ManifestItem,
     PrunedContextItem,
 )
+from app.context_v2.store import ContextStore, InMemoryContextStore, PostgresContextStore
 
 __all__ = [
     "CompiledContext",
@@ -26,7 +27,10 @@ __all__ = [
     "ContextManifest",
     "ContextPartition",
     "ContextSection",
+    "ContextStore",
     "ManifestItem",
+    "InMemoryContextStore",
+    "PostgresContextStore",
     "PrunedContextItem",
     "ResultReference",
     "StateDecision",

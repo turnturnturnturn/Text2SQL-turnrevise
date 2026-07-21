@@ -386,3 +386,35 @@ async def test_harness_run_checkpoint_delegates_redacted_artifact_refs():
         )
     ) == ["ok"]
     assert (await store.list_checkpoints(observed_run_id))[0].safe_to_resume is True
+
+
+@pytest.mark.asyncio
+async def test_enforce_mode_uses_v2_phase_boundaries():
+    store = InMemoryRunStore()
+    harness = RequestHarness(store, mode="enforce")
+    run_id = None
+
+    async def operation(run):
+        nonlocal run_id
+        run_id = run.run_id
+        yield "ok"
+
+    assert await collect(
+        harness.execute_stream(
+            instruction="query",
+            user_id="user",
+            conversation_id=None,
+            operation=operation,
+        )
+    ) == ["ok"]
+    assert [step.status for step in await store.list_steps(run_id)] == [
+        RunStatus.RECEIVED,
+        RunStatus.CONTEXT_BUILDING,
+        RunStatus.LINKING,
+        RunStatus.PLANNING,
+        RunStatus.GENERATING,
+        RunStatus.VALIDATING,
+        RunStatus.EXECUTING,
+        RunStatus.VERIFYING,
+        RunStatus.COMPLETED,
+    ]

@@ -94,6 +94,7 @@ ALLOWED_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     RunStatus.TOOL_RUNNING: frozenset(
         {
             RunStatus.MODEL_RUNNING,
+            RunStatus.GENERATING,
             RunStatus.VERIFYING,
             RunStatus.FAILED,
             RunStatus.CANCELLED,

@@ -10,6 +10,8 @@ from app.audit import AuditedAgent, BusinessAuditLogger
 from app.config import settings
 from app.db import SafePostgresRunner
 from app.harness import HarnessBudget, HarnessLifecycleHook, RequestHarness
+from app.harness.clarification import ClarificationService, PostgresClarificationStore
+from app.context_v2 import ContextCompiler, PostgresContextStore
 from app.prompt import CommerceSystemPromptBuilder
 from app.retrieval import LazySentenceEmbedder
 from app.grounding import (
@@ -22,6 +24,7 @@ from app.grounding import (
 from app.security.jwt_resolver import JwtUserResolver
 from app.state import (
     MemoryContextEnhancer,
+    ContextV2Enhancer,
     MemoryService,
     PostgresAgentMemory,
     PostgresConversationStore,
@@ -85,12 +88,24 @@ run_store = PostgresRunStore(
     ),
     retrieval_mode=settings.retrieval_mode,
 )
+context_store = PostgresContextStore(settings.agent_state_database_url)
+clarification_store = PostgresClarificationStore(settings.agent_state_database_url)
+clarification_service = ClarificationService(
+    run_store,
+    clarification_store,
+    ttl_seconds=settings.clarification_ttl_seconds,
+)
 harness_budget = HarnessBudget(
     timeout_seconds=settings.harness_timeout_seconds,
     max_tool_calls=settings.harness_max_tool_calls,
     max_read_retries=settings.harness_max_retries,
+    max_context_tokens=settings.context_token_budget,
 )
-request_harness = RequestHarness(run_store, budget=harness_budget)
+request_harness = RequestHarness(
+    run_store,
+    budget=harness_budget,
+    mode=settings.context_harness_v2_mode,
+)
 user_resolver = JwtUserResolver(settings.jwt_secret)
 
 
@@ -145,9 +160,18 @@ def create_agent() -> Agent:
             max_tool_iterations=settings.harness_max_tool_calls,
         ),
         system_prompt_builder=CommerceSystemPromptBuilder(settings.grounding_v2_mode),
-        lifecycle_hooks=[HarnessLifecycleHook(run_store, harness_budget)],
-        llm_context_enhancer=MemoryContextEnhancer(
-            memory_service, top_k=settings.memory_top_k
+        lifecycle_hooks=[HarnessLifecycleHook(
+            run_store,
+            harness_budget,
+            mode=settings.context_harness_v2_mode,
+        )],
+        llm_context_enhancer=ContextV2Enhancer(
+            memory_service,
+            ContextCompiler(),
+            context_store,
+            mode=settings.context_harness_v2_mode,
+            top_k=settings.memory_top_k,
+            total_token_budget=settings.context_token_budget,
         ),
         conversation_filters=[RecentConversationFilter()],
         workflow_handler=ActionWorkflowHandler(business_client, memory_service),
@@ -180,6 +204,8 @@ app.include_router(
         conversation_store=conversation_store,
         run_store=run_store,
         query_plan_store=query_plan_store,
+        clarification_service=clarification_service,
+        context_store=context_store,
     )
 )
 

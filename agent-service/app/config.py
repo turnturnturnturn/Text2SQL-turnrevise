@@ -53,6 +53,13 @@ class Settings:
     grounding_v2_mode: str = _choice(
         "GROUNDING_V2_MODE", "shadow", frozenset({"off", "shadow", "enforce"})
     )
+    context_harness_v2_mode: str = _choice(
+        "CONTEXT_HARNESS_V2_MODE", "shadow", frozenset({"off", "shadow", "enforce"})
+    )
+    context_token_budget: int = int(os.getenv("CONTEXT_TOKEN_BUDGET", "8192"))
+    clarification_ttl_seconds: int = int(
+        os.getenv("CLARIFICATION_TTL_SECONDS", "900")
+    )
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
     retrieval_top_k: int = int(os.getenv("RETRIEVAL_TOP_K", "8"))
     harness_max_tool_calls: int = int(os.getenv("HARNESS_MAX_TOOL_CALLS", "8"))

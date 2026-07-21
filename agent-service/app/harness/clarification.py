@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol
+
+import psycopg
+from psycopg.rows import dict_row
 
 from app.harness.models import OperationKind, RunRecord, RunStatus, utc_now
 from app.harness.store import RunStore
@@ -71,6 +75,87 @@ class InMemoryClarificationStore:
         async with self._lock:
             card = self._cards.get(parent_run_id)
             return deepcopy(card) if card else None
+
+
+class PostgresClarificationStore:
+    def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
+
+    async def _connect(self):
+        return await psycopg.AsyncConnection.connect(
+            self.database_url, row_factory=dict_row
+        )
+
+    @staticmethod
+    def _option(payload: dict) -> ClarificationOption:
+        return ClarificationOption(
+            option_id=payload["option_id"],
+            label=payload["label"],
+            value_id=payload["value_id"],
+            evidence_id=payload["evidence_id"],
+            source_hash=payload["source_hash"],
+        )
+
+    async def save(self, card: ClarificationCard) -> None:
+        options = [
+            {
+                "option_id": entry.option_id,
+                "label": entry.label,
+                "value_id": entry.value_id,
+                "evidence_id": entry.evidence_id,
+                "source_hash": entry.source_hash,
+            }
+            for entry in card.options
+        ]
+        async with await self._connect() as conn:
+            await conn.execute(
+                """INSERT INTO agent_state.clarification_requests
+                   (id,parent_run_id,user_id,ambiguity_id,question,options,reason,
+                    expires_at,created_at,answered_at,selected_option_id,child_run_id)
+                   VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (parent_run_id) DO UPDATE SET
+                     answered_at=EXCLUDED.answered_at,
+                     selected_option_id=EXCLUDED.selected_option_id,
+                     child_run_id=EXCLUDED.child_run_id""",
+                (
+                    card.card_id,
+                    card.parent_run_id,
+                    card.user_id,
+                    card.ambiguity_id,
+                    card.question,
+                    json.dumps(options),
+                    card.reason,
+                    card.expires_at,
+                    card.created_at,
+                    card.answered_at,
+                    card.selected_option_id,
+                    card.child_run_id,
+                ),
+            )
+
+    async def get_for_parent(self, parent_run_id: str) -> ClarificationCard | None:
+        async with await self._connect() as conn:
+            row = await (await conn.execute(
+                """SELECT * FROM agent_state.clarification_requests
+                   WHERE parent_run_id=%s""",
+                (parent_run_id,),
+            )).fetchone()
+        if row is None:
+            return None
+        return ClarificationCard(
+            card_id=str(row["id"]),
+            parent_run_id=str(row["parent_run_id"]),
+            user_id=str(row["user_id"]),
+            ambiguity_id=row["ambiguity_id"],
+            question=row["question"],
+            options=tuple(self._option(payload) for payload in row["options"]),
+            reason=row["reason"],
+            expires_at=row["expires_at"],
+            created_at=row["created_at"],
+            answered_at=row["answered_at"],
+            selected_option_id=row["selected_option_id"],
+            child_run_id=(str(row["child_run_id"]) if row["child_run_id"] else None),
+        )
 
 
 class ClarificationService:
@@ -165,4 +250,3 @@ class ClarificationService:
             card.child_run_id = child.run_id
             await self.card_store.save(card)
             return child
-

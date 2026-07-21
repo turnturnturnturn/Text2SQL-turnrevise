@@ -70,9 +70,13 @@ class RequestHarness(Generic[T]):
         store: RunStore | None = None,
         *,
         budget: HarnessBudget | None = None,
+        mode: str = "shadow",
     ) -> None:
+        if mode not in {"off", "shadow", "enforce"}:
+            raise ValueError("mode must be off, shadow, or enforce")
         self.store = store or InMemoryRunStore()
         self.budget = budget or HarnessBudget()
+        self.mode = mode
 
     async def execute_stream(
         self,
@@ -96,12 +100,26 @@ class RequestHarness(Generic[T]):
         try:
             await self.store.create(record)
             async with asyncio.timeout(self.budget.timeout_seconds):
-                await self.store.transition(run_id, RunStatus.CONTEXT_READY)
-                await self.store.transition(run_id, RunStatus.MODEL_RUNNING)
+                if self.mode == "enforce":
+                    for stage in (
+                        RunStatus.CONTEXT_BUILDING,
+                        RunStatus.LINKING,
+                        RunStatus.PLANNING,
+                        RunStatus.GENERATING,
+                    ):
+                        await self.store.transition(run_id, stage)
+                else:
+                    await self.store.transition(run_id, RunStatus.CONTEXT_READY)
+                    await self.store.transition(run_id, RunStatus.MODEL_RUNNING)
                 async for item in operation(run):
                     yield item
                 current = await self.store.get(run_id)
-                if current is not None and current.status != RunStatus.VERIFYING:
+                if self.mode == "enforce" and current is not None:
+                    if current.status == RunStatus.GENERATING:
+                        await self.store.transition(run_id, RunStatus.VALIDATING)
+                        await self.store.transition(run_id, RunStatus.EXECUTING)
+                        await self.store.transition(run_id, RunStatus.VERIFYING)
+                elif current is not None and current.status != RunStatus.VERIFYING:
                     await self.store.transition(run_id, RunStatus.VERIFYING)
                 await self.store.transition(run_id, RunStatus.COMPLETED)
         except TimeoutError:

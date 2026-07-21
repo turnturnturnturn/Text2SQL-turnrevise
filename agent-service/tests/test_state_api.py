@@ -14,6 +14,8 @@ from app.harness.clarification import (
 from app.security.jwt_resolver import JwtUserResolver
 from app.state import InMemoryStateRepository, MemoryService
 from app.state.api import create_state_router
+from app.context_v2 import ContextCompiler, ContextItem, ContextPartition
+from app.context_v2.store import InMemoryContextStore
 
 
 SECRET = "state-api-test-secret-that-is-at-least-32-characters"
@@ -43,6 +45,7 @@ def test_state_api_is_authenticated_and_user_scoped():
     clarification_service = ClarificationService(
         run_store, InMemoryClarificationStore()
     )
+    context_store = InMemoryContextStore()
 
     class FakeQueryPlanStore:
         async def list_for_run(self, run_id):
@@ -57,6 +60,7 @@ def test_state_api_is_authenticated_and_user_scoped():
             run_store=run_store,
             query_plan_store=FakeQueryPlanStore(),
             clarification_service=clarification_service,
+            context_store=context_store,
         )
     )
 
@@ -65,6 +69,23 @@ def test_state_api_is_authenticated_and_user_scoped():
     alice_memory = asyncio.run(service.create_candidate("alice", "默认按区域展示"))
     asyncio.run(service.create_candidate("bob", "不应泄露"))
     asyncio.run(run_store.create(RunRecord("run-alice", "alice", None, "a" * 64)))
+    manifest = ContextCompiler(token_estimator=len).compile(
+        run_id="run-alice",
+        total_token_budget=100,
+        mode="shadow",
+        items=[
+            ContextItem(
+                item_id="secret-item",
+                partition=ContextPartition.REQUEST,
+                content="do not return this raw request",
+                source_id="request:run-alice",
+                source_hash="e" * 64,
+                trust_level="current_request",
+                mandatory=True,
+            )
+        ],
+    ).manifest
+    asyncio.run(context_store.save_manifest(manifest))
     asyncio.run(
         run_store.create(RunRecord("clarify-alice", "alice", None, "b" * 64))
     )
@@ -118,6 +139,16 @@ def test_state_api_is_authenticated_and_user_scoped():
         "/api/runs/run-alice/evidence",
         headers={"Authorization": f"Bearer {token('admin-user', 'admin')}"},
     ).status_code == 200
+    context_manifest = client.get(
+        "/api/runs/run-alice/context-manifest", headers=headers
+    )
+    assert context_manifest.status_code == 200
+    assert "do not return this raw request" not in context_manifest.text
+    assert context_manifest.json()["provenance_coverage"] == 1.0
+    assert client.get(
+        "/api/runs/run-alice/context-manifest",
+        headers={"Authorization": f"Bearer {token('bob')}"},
+    ).status_code == 404
     assert client.delete("/api/conversations/owned", headers=headers).status_code == 204
     clarified = client.post(
         "/api/runs/clarify-alice/clarify",

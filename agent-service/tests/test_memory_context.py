@@ -5,6 +5,10 @@ from vanna.core.user import User
 from app.state import InMemoryStateRepository, MemoryContextEnhancer, MemoryService
 from app.state.context import RecentConversationFilter
 from app.state.models import MemoryValidity
+from app.state.context import ContextV2Enhancer
+from app.context_v2 import ContextCompiler
+from app.context_v2.store import InMemoryContextStore
+from app.harness.context import bind_request_context, reset_request_context
 
 
 @pytest.mark.asyncio
@@ -72,3 +76,31 @@ async def test_confirming_new_conflicting_memory_supersedes_old_memory():
     assert [memory.id for _, memory in matches] == [new.id]
     assert (await repository.get_memory(old.id, "u1")).validity == MemoryValidity.SUPERSEDED
     assert any(event.event_type == "superseded" for event in repository.memory_events)
+
+
+@pytest.mark.asyncio
+async def test_context_v2_enhancer_compiles_and_persists_redacted_manifest():
+    service = MemoryService(InMemoryStateRepository())
+    memory = await service.create_candidate("u1", "默认按华东区域展示")
+    await service.confirm("u1", memory.id)
+    store = InMemoryContextStore()
+    enhancer = ContextV2Enhancer(
+        service,
+        ContextCompiler(token_estimator=len),
+        store,
+        mode="enforce",
+        total_token_budget=3000,
+    )
+    tokens = bind_request_context("run-context", "查询华东销售额")
+    try:
+        prompt = await enhancer.enhance_system_prompt(
+            "SYSTEM SAFETY", "查询华东销售额", User(id="u1")
+        )
+    finally:
+        reset_request_context(tokens)
+
+    assert '<context partition="safety">' in prompt
+    assert memory.content in prompt
+    manifest = await store.get_manifest("run-context")
+    assert manifest["provenance_coverage"] == 1.0
+    assert "SYSTEM SAFETY" not in str(manifest)

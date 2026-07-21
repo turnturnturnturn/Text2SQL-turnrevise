@@ -16,9 +16,10 @@ READ_RETRY_ERRORS = frozenset({"semantic_validation", "sql_policy", "database"})
 class HarnessLifecycleHook(LifecycleHook):
     """Connect Vanna's tool callbacks to the durable Harness budget and state."""
 
-    def __init__(self, store: RunStore, budget: HarnessBudget):
+    def __init__(self, store: RunStore, budget: HarnessBudget, *, mode: str = "shadow"):
         self.store = store
         self.budget = budget
+        self.mode = mode
 
     async def before_tool(self, tool: Any, context: Any) -> None:
         del tool, context
@@ -29,7 +30,10 @@ class HarnessLifecycleHook(LifecycleHook):
         if calls > self.budget.max_tool_calls:
             raise HarnessBudgetExceeded("tool call budget exceeded")
         record = await self.store.get(run_id)
-        if record is not None and record.status == RunStatus.MODEL_RUNNING:
+        if record is not None and record.status in {
+            RunStatus.MODEL_RUNNING,
+            RunStatus.GENERATING,
+        }:
             await self.store.transition(run_id, RunStatus.TOOL_RUNNING)
 
     async def after_tool(self, result: ToolResult) -> ToolResult | None:
@@ -43,5 +47,8 @@ class HarnessLifecycleHook(LifecycleHook):
                 raise HarnessBudgetExceeded("read retry budget exceeded")
         record = await self.store.get(run_id)
         if record is not None and record.status == RunStatus.TOOL_RUNNING:
-            await self.store.transition(run_id, RunStatus.MODEL_RUNNING)
+            await self.store.transition(
+                run_id,
+                RunStatus.GENERATING if self.mode == "enforce" else RunStatus.MODEL_RUNNING,
+            )
         return None

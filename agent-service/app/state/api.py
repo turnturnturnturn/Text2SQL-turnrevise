@@ -15,6 +15,7 @@ from app.security.jwt_resolver import JwtUserResolver
 from app.state.conversation_store import PostgresConversationStore
 from app.state.memory_service import MemoryService
 from app.grounding.plan_store import QueryPlanStore
+from app.context_v2.store import ContextStore
 
 
 class ClarificationAnswer(BaseModel):
@@ -29,6 +30,7 @@ def create_state_router(
     run_store: RunStore,
     query_plan_store: QueryPlanStore | None = None,
     clarification_service: ClarificationService | None = None,
+    context_store: ContextStore | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agent-state"])
 
@@ -126,6 +128,22 @@ def create_state_router(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return asdict(child)
+
+    @router.get("/runs/{run_id}/context-manifest")
+    async def get_context_manifest(
+        run_id: str, authorization: str | None = Header(default=None)
+    ):
+        user = user_from_header(authorization)
+        run = await run_store.get(run_id)
+        is_admin = user.metadata.get("role") == "admin"
+        if run is None or (run.user_id != str(user.id) and not is_admin):
+            raise HTTPException(status_code=404, detail="Run not found")
+        if context_store is None:
+            raise HTTPException(status_code=404, detail="Context manifest not found")
+        manifest = await context_store.get_manifest(run_id)
+        if manifest is None:
+            raise HTTPException(status_code=404, detail="Context manifest not found")
+        return manifest
 
     @router.post("/runs/{run_id}/cancel")
     async def cancel_run(
