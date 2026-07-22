@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a reproducible defect without disclosing sensitive data.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include API keys, JWTs, production URLs, SQL results, prompts, or personal data."
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal redacted reproduction
+      description: List safe steps, version, and configuration names only.
+    validations:
+      required: true
+  - type: dropdown
+    id: safety_boundary
+    attributes:
+      label: Does this affect a security boundary?
+      options:
+        - "No"
+        - "Yes - I will use private vulnerability reporting instead"
+    validations:
+      required: true
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Sensitive-data check
+      options:
+        - label: I confirm this report contains no secrets, production database URLs, SQL result rows, prompt text, or personal data.
+          required: true
