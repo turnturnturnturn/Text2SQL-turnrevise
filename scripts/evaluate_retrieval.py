@@ -272,7 +272,7 @@ def markdown_report(result: dict[str, Any]) -> str:
     sql = result["oracle_sql"]
     live = result["live_agent"]
     harness = result.get("harness")
-    live_lines = ["- 未运行；使用 `--live-agent` 启用本地 Qwen 端到端评测。"]
+    live_lines = ["- 未运行；使用 `--live-agent` 启用已配置模型的端到端评测。"]
     if live.get("enabled"):
         live_lines = [
             f"- SQL 执行成功率：{percent(live['sql_execution_success_rate'])}",
@@ -302,7 +302,7 @@ def markdown_report(result: dict[str, Any]) -> str:
             f"- SQL 执行成功率：{percent(sql['sql_execution_success_rate'])}（{sql['execution_question_count']} 个只读 oracle SQL）",
             f"- 精确结果等价率：{percent(sql['result_equivalence_rate'])}（完整列和值比较）",
             "",
-            "## Qwen3-4B 实际 Agent",
+            "## 已配置模型的实际 Agent",
             "",
             *live_lines,
             "",

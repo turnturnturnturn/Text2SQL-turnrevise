@@ -42,7 +42,7 @@ class Settings:
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5")
     openai_base_url: str | None = os.getenv("OPENAI_BASE_URL") or None
     ollama_host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-    ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen3:4b")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3.2")
     allowed_origins: tuple[str, ...] = _csv(
         "AGENT_ALLOWED_ORIGINS", "http://localhost:8000,http://localhost:8080"
     )

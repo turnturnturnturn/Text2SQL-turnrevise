@@ -119,42 +119,16 @@ curl -s http://localhost:8080/api/auth/login \
 
 ## 模型切换
 
-### 本机魔塔 Qwen3-4B（Apple Silicon 推荐）
+### OpenAI-compatible API
 
-已有魔塔 BF16 权重时，可转换为 MLX 4-bit 模型并提供 OpenAI-compatible API：
-
-```bash
-./scripts/prepare-local-qwen.sh
-./scripts/start-local-qwen.sh
-```
-
-第二条命令需保持运行。它使用 Apple Metal 在 `0.0.0.0:8081` 启动仅供开发使用、无认证的模型服务；不要在不可信网络中长期开放。
-
-`.env` 配置为：
+使用任意兼容 OpenAI API 的云端或自托管服务。项目不附带模型、模型转换工具或本机模型运行环境：
 
 ```dotenv
 LLM_PROVIDER=openai
-OPENAI_API_KEY=local-mlx
-OPENAI_MODEL=default_model
-OPENAI_BASE_URL=http://host.docker.internal:8081/v1
-```
-
-这里选择 `openai` 是因为 MLX 暴露的是 OpenAI-compatible 协议，并不产生 OpenAI API 费用。启动容器：
-
-```bash
-./scripts/docker-compose.sh up --build -d
-./scripts/docker-compose.sh ps
-```
-
-`docker-compose.sh` 会优先使用系统 PATH 中的 Docker；若 CLI 尚未建立全局链接，则自动使用 Docker Desktop 应用内置的 CLI 和凭据助手。
-
-云端 OpenAI-compatible API：
-
-```dotenv
-LLM_PROVIDER=openai
-OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-5
-# 第三方兼容服务可设置 OPENAI_BASE_URL
+OPENAI_API_KEY=your-provider-api-key
+OPENAI_MODEL=your-provider-model
+# 第三方或自托管兼容服务设置 OPENAI_BASE_URL
+OPENAI_BASE_URL=https://your-provider.example/v1
 ```
 
 Ollama：
@@ -162,8 +136,17 @@ Ollama：
 ```dotenv
 LLM_PROVIDER=ollama
 OLLAMA_HOST=http://host.docker.internal:11434
-OLLAMA_MODEL=qwen3:4b
+OLLAMA_MODEL=llama3.2
 ```
+
+启动容器：
+
+```bash
+./scripts/docker-compose.sh up --build -d
+./scripts/docker-compose.sh ps
+```
+
+`docker-compose.sh` 会优先使用系统 PATH 中的 Docker；若 CLI 尚未建立全局链接，则自动使用 Docker Desktop 应用内置的 CLI 和凭据助手。
 
 ## 支持的写操作
 
@@ -224,9 +207,9 @@ Grounding v2 离线验收不依赖数据库或模型下载：
 
 该脚本调用生产 linker 代码，检查 Table Recall@5、Column Recall@10、Join Path Exact Match、Value Recall@3 和 candidate Join 零执行；这些指标不代表模型 Text2SQL 准确率。
 
-脚本比较关键词基线与 BGE 中文向量 + RRF 混合检索，并将本次实际运行的 Recall@3、Recall@5、MRR、静态安全拦截率、Oracle SQL 执行成功率和完整结果等价率输出到 `evaluation/reports/`。增加 `--live-agent` 后，还会通过真实 SSE 接口分别评测本地 Qwen 的 SQL 执行、结果等价、危险请求无执行和审计哈希关联率；`--harness-input` 可追加运行完成率、纠错率、Memory Recall@5、延迟和失败分类。详情参见 [评测说明](evaluation/README.md) 和 [作品集说明](PORTFOLIO.md)。
+脚本比较关键词基线与 BGE 中文向量 + RRF 混合检索，并将本次实际运行的 Recall@3、Recall@5、MRR、静态安全拦截率、Oracle SQL 执行成功率和完整结果等价率输出到 `evaluation/reports/`。增加 `--live-agent` 后，还会通过真实 SSE 接口评测已配置模型的 SQL 执行、结果等价、危险请求无执行和审计哈希关联率；`--harness-input` 可追加运行完成率、纠错率、Memory Recall@5、延迟和失败分类。详情参见 [评测说明](evaluation/README.md) 和 [作品集说明](PORTFOLIO.md)。
 
-Agent Docker 镜像显式安装 PyTorch ARM64 CPU wheel，不包含 CUDA/NVIDIA 运行库；Apple Metal 仅由宿主机 MLX 使用。
+Agent Docker 镜像不包含 CUDA/NVIDIA 运行库；本地模型由使用者自行安装和运行。
 
 端到端重点验证：
 
