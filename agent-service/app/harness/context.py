@@ -15,6 +15,12 @@ _instruction_hash: ContextVar[str | None] = ContextVar(
 _instruction_text: ContextVar[str | None] = ContextVar(
     "harness_instruction_text", default=None
 )
+_conversation_id: ContextVar[str | None] = ContextVar(
+    "harness_conversation_id", default=None
+)
+_resume_evidence: ContextVar[dict[str, str] | None] = ContextVar(
+    "harness_resume_evidence", default=None
+)
 
 
 @dataclass(frozen=True)
@@ -23,9 +29,12 @@ class RequestContextTokens:
     instruction_hash: Token[str | None]
     instruction_text: Token[str | None]
     grounding_state: Token[RequestGroundingState | None]
+    conversation_id: Token[str | None]
 
 
-def bind_request_context(run_id: str, instruction: str) -> RequestContextTokens:
+def bind_request_context(
+    run_id: str, instruction: str, *, conversation_id: str | None = None
+) -> RequestContextTokens:
     """Bind correlation data to this task and any child tasks it creates."""
     return RequestContextTokens(
         run_id=_run_id.set(run_id),
@@ -34,11 +43,13 @@ def bind_request_context(run_id: str, instruction: str) -> RequestContextTokens:
         ),
         instruction_text=_instruction_text.set(instruction),
         grounding_state=bind_grounding_context(),
+        conversation_id=_conversation_id.set(conversation_id),
     )
 
 
 def reset_request_context(tokens: RequestContextTokens) -> None:
     # Context variables must be reset in reverse binding order.
+    _conversation_id.reset(tokens.conversation_id)
     reset_grounding_context(tokens.grounding_state)
     _instruction_text.reset(tokens.instruction_text)
     _instruction_hash.reset(tokens.instruction_hash)
@@ -57,6 +68,10 @@ def get_instruction_text() -> str | None:
     return _instruction_text.get()
 
 
+def get_conversation_id() -> str | None:
+    return _conversation_id.get()
+
+
 def set_instruction_hash(value: str) -> Token[str | None]:
     """Compatibility hook for callers that only bind an instruction hash."""
     return _instruction_hash.set(value)
@@ -64,3 +79,16 @@ def set_instruction_hash(value: str) -> Token[str | None]:
 
 def reset_instruction_hash(token: Token[str | None]) -> None:
     _instruction_hash.reset(token)
+
+
+def set_resume_evidence(value: dict[str, str]) -> Token[dict[str, str] | None]:
+    return _resume_evidence.set(dict(value))
+
+
+def reset_resume_evidence(token: Token[dict[str, str] | None]) -> None:
+    _resume_evidence.reset(token)
+
+
+def get_resume_evidence() -> dict[str, str] | None:
+    value = _resume_evidence.get()
+    return dict(value) if value else None

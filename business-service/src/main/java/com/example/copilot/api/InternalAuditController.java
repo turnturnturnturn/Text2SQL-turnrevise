@@ -12,6 +12,8 @@ import java.security.MessageDigest;
 @RestController
 @RequestMapping("/internal/audit")
 public class InternalAuditController {
+    public record RunAuditResponse(String runId, String eventType, String generatedSql,
+                                   boolean success, Long durationMs) {}
     private final AuditService auditService;
     private final String serviceToken;
 
@@ -30,5 +32,23 @@ public class InternalAuditController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Invalid internal service token");
         }
         auditService.recordAgentEvent(request);
+    }
+
+    @GetMapping("/runs/{runId}")
+    public RunAuditResponse getRunAudit(
+            @RequestHeader("X-Internal-Service-Token") String token,
+            @PathVariable String runId) {
+        verifyServiceToken(token);
+        var audit = auditService.getRunAudit(runId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Run audit not found"));
+        return new RunAuditResponse(audit.runId(), audit.eventType(), audit.generatedSql(),
+                audit.success(), audit.durationMs());
+    }
+
+    private void verifyServiceToken(String token) {
+        if (!MessageDigest.isEqual(token.getBytes(StandardCharsets.UTF_8),
+                serviceToken.getBytes(StandardCharsets.UTF_8))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Invalid internal service token");
+        }
     }
 }

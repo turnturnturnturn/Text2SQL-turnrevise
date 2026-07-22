@@ -37,6 +37,15 @@ class BusinessServiceClient:
             response = await client.post("/internal/audit/events", json=payload, headers=headers)
             response.raise_for_status()
 
+    async def get_run_audit(self, run_id: str) -> dict[str, Any] | None:
+        headers = {"X-Internal-Service-Token": self.service_token}
+        async with httpx.AsyncClient(base_url=self.base_url, timeout=10) as client:
+            response = await client.get(f"/internal/audit/runs/{run_id}", headers=headers)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+
     async def _post(
         self,
         path: str,

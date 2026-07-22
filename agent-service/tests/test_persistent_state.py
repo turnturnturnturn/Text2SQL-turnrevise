@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 import pytest
 from vanna.core.user import User
@@ -64,6 +65,18 @@ async def test_update_upserts_new_conversation_like_vanna_agent():
     restored = await store.get_conversation("new-from-agent", alice)
     assert restored is not None
     assert restored.messages[0].content == "hello"
+
+
+@pytest.mark.asyncio
+async def test_find_instruction_by_hash_returns_only_owners_matching_user_message():
+    repository = InMemoryStateRepository()
+    store = PostgresConversationStore(repository)
+    alice = User(id="00000000-0000-0000-0000-000000000001")
+    await store.create_conversation("resume-conv", alice, "original question")
+    digest = hashlib.sha256(b"original question").hexdigest()
+    assert await store.find_instruction_by_hash("resume-conv", str(alice.id), digest) == "original question"
+    assert await store.find_instruction_by_hash("resume-conv", "other", digest) is None
+    assert await store.find_instruction_by_hash("resume-conv", str(alice.id), "0" * 64) is None
 
 
 @pytest.mark.asyncio

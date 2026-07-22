@@ -21,14 +21,20 @@ echo "[verify] Gold-memory retrieval suite"
 echo "[verify] Grounding v2 linking suite"
 "$PYTHON" "$ROOT/scripts/evaluate_grounding.py" --check
 
+echo "[verify] Context Compiler v2 and clarification suite"
+"$PYTHON" "$ROOT/scripts/evaluate_context.py" --check
+
+echo "[verify] Phase D immutable 160-case release gate"
+"$PYTHON" "$ROOT/scripts/evaluate_release.py" --check
+
 echo "[verify] Java tests"
 if [[ -x "$ROOT/business-service/mvnw" ]]; then
   (cd "$ROOT/business-service" && ./mvnw test)
 elif command -v mvn >/dev/null 2>&1; then
   (cd "$ROOT/business-service" && mvn test)
 else
-  echo "[verify] Maven is not on PATH; using the Docker build stage (mvn package runs tests)"
-  "$ROOT/scripts/docker-compose.sh" build business-service
+  echo "[verify] Maven is not on PATH; building the Docker test stage (mvn package runs tests)"
+  docker build --target build -t enterprise-db-copilot-business-test "$ROOT/business-service"
 fi
 
 if [[ "${RUN_E2E:-0}" != "1" ]]; then

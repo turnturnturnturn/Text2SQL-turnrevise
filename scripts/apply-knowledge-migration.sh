@@ -28,3 +28,7 @@ fi
 "$ROOT/scripts/docker-compose.sh" exec -T postgres \
   psql -v ON_ERROR_STOP=1 -U "${POSTGRES_ADMIN_USER:-copilot_admin}" \
   -d enterprise_copilot -f /migrations/004_grounding_query_plan.sql
+
+"$ROOT/scripts/docker-compose.sh" exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U "${POSTGRES_ADMIN_USER:-copilot_admin}" \
+  -d enterprise_copilot -f /migrations/005_context_harness_v2.sql

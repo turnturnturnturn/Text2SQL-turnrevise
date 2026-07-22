@@ -15,8 +15,18 @@ from app.state.memory_service import (
     normalize_memory_content,
     sanitize_memory_content,
 )
-from app.state.models import MemoryRecord, MemoryScope, MemoryStatus, MemoryType
+from app.state.models import (
+    MemoryRecord,
+    MemoryScope,
+    MemoryStatus,
+    MemoryType,
+    MemoryValidity,
+)
 from app.state.repositories import InMemoryStateRepository
+from app.context_v2 import ContextCompiler, ContextItem, ContextPartition
+from app.harness import InMemoryRunStore, OperationKind, RunRecord, RunStatus
+from app.harness.models import UnsafeRecoveryError
+from app.harness.uncertainty import UncertaintyGate, UncertaintySignals
 
 
 NUMERIC_TOLERANCE = Decimal("0.000001")
@@ -266,6 +276,11 @@ async def evaluate_memory_suite(
             embedding=list(map(float, embedder(clean))) if embedder else None,
             metadata={"fixture": True},
             expires_at=_memory_datetime(fixture.get("expires_at")),
+            validity=MemoryValidity(fixture.get("validity", "ACTIVE")),
+            source_hash=fixture.get("source_hash") or hashlib.sha256(
+                clean.encode("utf-8")
+            ).hexdigest(),
+            conflict_key=fixture.get("conflict_key"),
         )
         await repository.upsert_memory(record)
 
@@ -293,6 +308,148 @@ async def evaluate_memory_suite(
         "case_count": len(case_results),
         "metrics": metrics,
         "cases": metrics["memory_details"],
+    }
+
+
+async def evaluate_context_suite(suite: dict[str, Any]) -> dict[str, Any]:
+    """Run deterministic context, clarification, and restart scenarios."""
+    if not isinstance(suite.get("suite_version"), str):
+        raise ValueError("context suite requires suite_version")
+    context_cases = suite.get("context_cases", [])
+    clarification_cases = suite.get("clarification_cases", [])
+    recovery_cases = suite.get("recovery_cases", [])
+    if not all(isinstance(value, list) for value in (
+        context_cases, clarification_cases, recovery_cases
+    )):
+        raise ValueError("context suite case groups must be arrays")
+
+    included_total = 0
+    provenance_total = 0
+    critical_total = 0
+    critical_recalled = 0
+    context_details = []
+    compiler = ContextCompiler()
+    for case in context_cases:
+        items = []
+        for payload in case.get("items", []):
+            item_id = str(payload["id"])
+            items.append(
+                ContextItem(
+                    item_id=item_id,
+                    partition=ContextPartition(payload["partition"]),
+                    content=str(payload["content"]),
+                    source_id=str(payload.get("source_id") or f"fixture:{item_id}"),
+                    source_hash=str(payload.get("source_hash") or hashlib.sha256(
+                        item_id.encode("utf-8")
+                    ).hexdigest()),
+                    trust_level=str(payload.get("trust_level", "verified")),
+                    priority=int(payload.get("priority", 50)),
+                    mandatory=bool(payload.get("mandatory", False)),
+                )
+            )
+        compiled = compiler.compile(
+            run_id=f"evaluation:{case['id']}",
+            items=items,
+            total_token_budget=int(case.get("budget", 4096)),
+            mode="enforce",
+        )
+        included_ids = {item.item_id for item in compiled.manifest.included_items}
+        included_total += len(compiled.manifest.included_items)
+        provenance_total += sum(
+            bool(item.source_id and item.source_hash)
+            for item in compiled.manifest.included_items
+        )
+        critical = set(map(str, case.get("critical_item_ids", [])))
+        critical_total += len(critical)
+        hits = critical & included_ids
+        critical_recalled += len(hits)
+        context_details.append(
+            {
+                "id": case["id"],
+                "included_item_ids": sorted(included_ids),
+                "critical_item_ids": sorted(critical),
+                "critical_hits": sorted(hits),
+            }
+        )
+
+    gate = UncertaintyGate()
+    required = 0
+    required_detected = 0
+    unnecessary_denominator = 0
+    unnecessary = 0
+    clarification_details = []
+    for case in clarification_cases:
+        signals = UncertaintySignals(**case.get("signals", {}))
+        decision = gate.evaluate(signals)
+        predicted = decision.requires_clarification
+        expected = bool(case["should_clarify"])
+        if expected:
+            required += 1
+            required_detected += predicted
+        else:
+            unnecessary_denominator += 1
+            unnecessary += predicted
+        clarification_details.append(
+            {
+                "id": case["id"],
+                "expected": expected,
+                "predicted": predicted,
+                "risk_level": decision.risk_level.value,
+                "reasons": list(decision.reasons),
+            }
+        )
+
+    closed = 0
+    write_recovery_count = 0
+    for index, case in enumerate(recovery_cases):
+        store = InMemoryRunStore()
+        operation_kind = OperationKind(case.get("operation_kind", "READ_QUERY"))
+        run_id = f"recovery-{index}"
+        await store.create(
+            RunRecord(
+                run_id,
+                "evaluation-user",
+                None,
+                hashlib.sha256(run_id.encode("utf-8")).hexdigest(),
+                operation_kind=operation_kind,
+            )
+        )
+        await store.add_checkpoint(
+            run_id,
+            stage=RunStatus.RECEIVED,
+            artifacts=[],
+            safe_to_resume=bool(case.get("safe_to_resume", False)),
+        )
+        await store.fail_incomplete_runs()
+        closed += (await store.get(run_id)).status == RunStatus.FAILED
+        if operation_kind != OperationKind.READ_QUERY:
+            try:
+                await store.create_recovery_child(
+                    run_id, "evaluation-user", "recovery"
+                )
+            except UnsafeRecoveryError:
+                pass
+            else:
+                write_recovery_count += 1
+
+    return {
+        "suite_version": suite["suite_version"],
+        "metrics": {
+            "provenance_coverage": _rate(provenance_total, included_total),
+            "critical_constraint_recall": _rate(
+                critical_recalled, critical_total
+            ),
+            "clarification_required_recognition_rate": _rate(
+                required_detected, required
+            ),
+            "unnecessary_clarification_rate": _rate(
+                unnecessary, unnecessary_denominator
+            ),
+            "restart_closure_rate": _rate(closed, len(recovery_cases)),
+            "write_recovery_count": write_recovery_count,
+        },
+        "context_cases": context_details,
+        "clarification_cases": clarification_details,
     }
 
 

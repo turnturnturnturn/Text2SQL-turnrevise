@@ -10,6 +10,13 @@ from vanna.core.tool import Tool, ToolContext, ToolResult
 from app.retrieval import HybridKnowledgeRetriever, PostgresKnowledgeStore
 from app.grounding.context import record_grounding
 from app.grounding.linker import GroundingBundle, GroundingService
+from app.harness.clarification import (
+    ClarificationOption,
+    ClarificationService,
+    MaterialAmbiguity,
+)
+from app.harness.context import get_run_id
+from app.rollout.policy import effective_mode
 
 
 JOIN_HINTS = (
@@ -39,6 +46,9 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
         embedder_loader: Callable[[str], Any] | None = None,
         grounding_service: GroundingService | None = None,
         grounding_mode: str = "off",
+        context_harness_mode: str = "shadow",
+        clarification_service: ClarificationService | None = None,
+        trace_service=None,
     ):
         if grounding_mode not in {"off", "shadow", "enforce"}:
             raise ValueError("GROUNDING_V2_MODE must be off, shadow or enforce")
@@ -54,6 +64,11 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
         )
         self.grounding_service = grounding_service
         self.grounding_mode = grounding_mode
+        if context_harness_mode not in {"off", "shadow", "enforce"}:
+            raise ValueError("CONTEXT_HARNESS_V2_MODE must be off, shadow or enforce")
+        self.context_harness_mode = context_harness_mode
+        self.clarification_service = clarification_service
+        self.trace_service = trace_service
 
     @property
     def name(self) -> str:
@@ -70,9 +85,11 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
         self, context: ToolContext, args: SearchSchemaKnowledgeArgs
     ) -> ToolResult:
         try:
+            grounding_mode = effective_mode("grounding", self.grounding_mode)
             bundle = None
             grounding_warning = None
-            if self.grounding_mode == "enforce":
+            clarification_card = None
+            if grounding_mode == "enforce":
                 if self.grounding_service is None:
                     raise RuntimeError("Grounding v2 service is not configured")
                 bundle = await asyncio.to_thread(self.grounding_service.search, args.query)
@@ -81,6 +98,28 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
                 source_ids = list(bundle.snapshot.evidence_ids)
                 outcome = None
                 join_hints = []
+                if (
+                    bundle.snapshot.ambiguities
+                    and self.context_harness_mode == "enforce"
+                    and self.clarification_service is not None
+                    and get_run_id() is not None
+                ):
+                    options = self._clarification_options(bundle)
+                    if len(options) >= 2:
+                        clarification_card = await self.clarification_service.create(
+                            parent_run_id=get_run_id(),
+                            user_id=str(context.user.id),
+                            ambiguity=MaterialAmbiguity(
+                                ambiguity_id=f"grounding:{bundle.snapshot.query_hash[:16]}",
+                                question="请选择本次查询应使用的字段或受控值：",
+                                options=tuple(options[:3]),
+                                reason="; ".join(bundle.snapshot.ambiguities),
+                            ),
+                        )
+                        content += "\n\n**需要澄清**\n" + "\n".join(
+                            f"- `{entry.option_id}`: {entry.label}"
+                            for entry in clarification_card.options
+                        )
             else:
                 outcome = await self.retriever.search(args.query, args.limit)
                 content = "\n\n".join(document.render() for document in outcome.documents)
@@ -94,7 +133,7 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
                         f"- {hint}" for hint in join_hints
                     )
                 source_ids = [document.document_id for document in outcome.documents]
-                if self.grounding_mode == "shadow" and self.grounding_service is not None:
+                if grounding_mode == "shadow" and self.grounding_service is not None:
                     try:
                         bundle = await asyncio.to_thread(self.grounding_service.search, args.query)
                         record_grounding(bundle)
@@ -102,6 +141,16 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
                         grounding_warning = type(exc).__name__
 
             grounding_metadata = bundle.snapshot.to_safe_dict() if bundle else None
+            run_id = get_run_id()
+            if bundle is not None and run_id is not None and self.trace_service is not None:
+                attrs = {
+                    "grounding_mode": grounding_mode,
+                    "db_copilot.grounding_coverage": bundle.snapshot.confidence,
+                }
+                await self.trace_service.append(run_id, "schema_linked", attrs)
+                await self.trace_service.append(run_id, "value_linked", {
+                    **attrs, "count": len(bundle.snapshot.value_candidates)
+                })
             return ToolResult(
                 success=True,
                 result_for_llm=content,
@@ -126,9 +175,28 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
                     "vector_hits": 0 if outcome is None else outcome.vector_hits,
                     "source_ids": source_ids,
                     "join_hints": join_hints,
-                    "grounding_v2_mode": self.grounding_mode,
+                    "grounding_v2_mode": grounding_mode,
                     "grounding_v2": grounding_metadata,
                     "grounding_v2_warning": grounding_warning,
+                    "clarification_required": clarification_card is not None,
+                    "clarification_card": (
+                        None
+                        if clarification_card is None
+                        else {
+                            "parent_run_id": clarification_card.parent_run_id,
+                            "question": clarification_card.question,
+                            "expires_at": clarification_card.expires_at.isoformat(),
+                            "options": [
+                                {
+                                    "option_id": entry.option_id,
+                                    "label": entry.label,
+                                    "evidence_id": entry.evidence_id,
+                                    "source_hash": entry.source_hash,
+                                }
+                                for entry in clarification_card.options
+                            ],
+                        }
+                    ),
                 },
             )
         except Exception as exc:
@@ -198,3 +266,30 @@ class SearchSchemaKnowledgeTool(Tool[SearchSchemaKnowledgeArgs]):
             )
         sections.append(f"Grounding confidence: {snapshot.confidence:.4f}")
         return "\n\n".join(sections)
+
+    @staticmethod
+    def _clarification_options(bundle: GroundingBundle) -> list[ClarificationOption]:
+        snapshot = bundle.snapshot
+        options = [
+            ClarificationOption(
+                option_id=item.value_id,
+                label=f"{item.canonical_value} ({item.column_asset_id})",
+                value_id=item.value_id,
+                evidence_id=item.value_id,
+                source_hash=item.source_hash,
+            )
+            for item in snapshot.value_candidates
+        ]
+        if len(options) >= 2:
+            return options
+        return [
+            ClarificationOption(
+                option_id=item.asset_id,
+                label=item.asset_id,
+                value_id=item.asset_id,
+                evidence_id=item.asset_id,
+                source_hash=item.source_hash,
+            )
+            for item in snapshot.column_candidates
+            if item.score > 0
+        ]

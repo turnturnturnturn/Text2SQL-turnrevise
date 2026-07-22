@@ -54,6 +54,11 @@ def enforce_targets(result: dict[str, Any], targets: dict[str, Any]) -> None:
             "maximum_ineligible_memory_exposure_rate",
             lambda actual, expected: actual is not None and actual <= expected,
         ),
+        (
+            "incorrect_memory_exposure_rate",
+            "maximum_incorrect_memory_exposure_rate",
+            lambda actual, expected: actual is not None and actual <= expected,
+        ),
     )
     failures = []
     for metric_name, target_name, predicate in checks:

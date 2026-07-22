@@ -6,6 +6,7 @@ from app.evaluation import (
     aggregate_harness_metrics,
     compare_records,
     evaluate_memory_suite,
+    evaluate_context_suite,
     extract_dataframe_rows,
     harness_metrics_markdown,
     memory_suite_markdown,
@@ -183,3 +184,52 @@ async def test_memory_suite_uses_confirmed_scope_and_expiry_rules():
     assert set(result["cases"][0]["retrieved_memory_ids"]) <= {"gold", "wrong"}
     assert metrics["incorrect_memory_adoption_rate"] is None
     assert "错误记忆采用率：无可用样本" in memory_suite_markdown(result)
+
+
+@pytest.mark.asyncio
+async def test_context_suite_reports_real_denominators_and_nulls():
+    suite = {
+        "suite_version": "test-context",
+        "context_cases": [
+            {
+                "id": "c1",
+                "budget": 200,
+                "items": [
+                    {
+                        "id": "safety",
+                        "partition": "safety",
+                        "content": "policy",
+                        "mandatory": True,
+                    },
+                    {
+                        "id": "constraint",
+                        "partition": "conversation",
+                        "content": "paid_at",
+                        "priority": 100,
+                    },
+                ],
+                "critical_item_ids": ["constraint"],
+            }
+        ],
+        "clarification_cases": [
+            {
+                "id": "q1",
+                "signals": {
+                    "unresolved_ambiguities": 1,
+                    "source_backed_option_count": 2,
+                },
+                "should_clarify": True,
+            },
+            {"id": "q2", "signals": {}, "should_clarify": False},
+        ],
+        "recovery_cases": [],
+    }
+
+    result = await evaluate_context_suite(suite)
+    metrics = result["metrics"]
+    assert metrics["provenance_coverage"] == 1.0
+    assert metrics["critical_constraint_recall"] == 1.0
+    assert metrics["clarification_required_recognition_rate"] == 1.0
+    assert metrics["unnecessary_clarification_rate"] == 0.0
+    assert metrics["restart_closure_rate"] is None
+    assert metrics["write_recovery_count"] == 0

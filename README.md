@@ -33,6 +33,10 @@ PostgreSQL          business-service (Spring Boot)
 - “记住/以后按……”只生成候选卡片，用户确认后才会作为不可信参考上下文参与召回。
 - Grounding v2 从版本化目录执行双向 Schema Linking、confirmed Join 寻路和受控 Value Linking；Restricted 与候选关系不进入自动执行证据。
 - `enforce` 模式要求 SQL 前存在有效 QueryPlan，并确定性核对表、字段、值、分组和 Join；默认 `shadow` 只记录差异。
+- Context Compiler v2 为安全、请求、计划、Grounding、证据、记忆与会话分配 token 预算，并为所有入模条目记录来源；安全与当前请求不可裁剪。
+- 结构化 ConversationState 保留约束、选择、拒绝项和来源 message id；错误、冲突、过期及被取代记忆不会进入模型上下文。
+- Harness v2 支持阶段状态、脱敏 checkpoint、取消和只读恢复 child run；业务写入与审批永不自动恢复或重放。
+- `enforce` 下 Grounding 的来源化歧义会停在 `NEEDS_CLARIFICATION`，用户回答一次性澄清卡后创建新的只读 child run。
 
 ## 目录
 
@@ -43,6 +47,7 @@ PostgreSQL          business-service (Spring Boot)
 - `evaluation`：60 条中文标准题集与自动化质量报告。
 - `evaluation/memory_cases.json`：30 条 gold memory、错误记忆和隔离场景专项题集。
 - `evaluation/grounding_cases.json`：25 条 Schema/Join 与 20 条受控值链接专项题集。
+- `evaluation/context_cases.json`：15 条长上下文关键约束、10 条澄清和 3 条恢复安全专项题集。
 - `docs/TEXT2SQL_RESEARCH_NOTES.md`：最新 Text2SQL 研究映射、已落地优化及后续路线。
 - `docs/architecture/HARNESS_AND_MEMORY.md`：Harness、上下文编译、持久记忆和管理接口。
 - `AGENTS.md`：Codex worktree 协作、安全不变量与统一完成标准。
@@ -70,6 +75,14 @@ docker compose up --build
 ```
 
 该命令会创建只读 `semantic_catalog`，把现有 Schema、指标和验证 SQL 映射为带版本、来源哈希、信任级别和敏感度的统一语义资产，导入人工维护的低基数状态值，并创建脱敏 QueryPlan 记录。`GROUNDING_V2_MODE=off|shadow|enforce` 控制灰度；默认 `shadow` 保持当前答案路径，只增加证据和计划差异观测。
+
+阶段 C 的状态表和上下文清单可单独幂等升级：
+
+```bash
+./scripts/apply-context-migration.sh
+```
+
+`CONTEXT_HARNESS_V2_MODE=off|shadow|enforce` 默认同样为 `shadow`：`off` 使用旧上下文和旧生命周期；`shadow` 持久化脱敏 manifest/ConversationState 但不改变当前回答；`enforce` 使用分区编译、阶段状态和澄清门控。回滚只需切回 `off`，无需删除阶段 C 数据。
 
 切换策略：
 

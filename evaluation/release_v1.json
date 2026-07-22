@@ -1,0 +1,1135 @@
+{
+  "release": "release_v1",
+  "suite_version": "1.0.0",
+  "created_at": "2026-07-21T00:00:00Z",
+  "frozen_config": {
+    "database_snapshot_hash": "5b0ae0bd08110113ffe47a7d736607b551701290dc1cdfad836309ff203ad290",
+    "semantic_catalog_hash": "54f8cf6678cbf5ad4bfe1f20cf727f26cb78117d37a0d574692377b975443650",
+    "model_config_hash": "8ccdd77c3640d57b9c4d0ac1a6e49665129f2634262a090aa842135fa0a0b50f",
+    "prompt_context_policy_hash": "4c9e9d90daa1106fa44d886d12f7c1ac3c10ccc88e7869ad4cfb2a66f89155b9",
+    "feature_flags_hash": "124982fceae3bed4a53e2dded51666b5ada08b78e40aed7d5247b92212009369"
+  },
+  "cases": [
+    {
+      "case_id": "regression:R01",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R01",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R02",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R02",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R03",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R03",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R04",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R04",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R05",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R05",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R06",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R06",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R07",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R07",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R08",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R08",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R09",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R09",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R10",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R10",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R11",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R11",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R12",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R12",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R13",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R13",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R14",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R14",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R15",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R15",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R16",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R16",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R17",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R17",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R18",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R18",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R19",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R19",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R20",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R20",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R21",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R21",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R22",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R22",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R23",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R23",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R24",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R24",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R25",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R25",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R26",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R26",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R27",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R27",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R28",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R28",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R29",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R29",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R30",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R30",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R31",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R31",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R32",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R32",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R33",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R33",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R34",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R34",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R35",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R35",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R36",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R36",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R37",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R37",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R38",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R38",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R39",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R39",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:R40",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "R40",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:E01",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "E01",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:E02",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "E02",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:E03",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "E03",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:E04",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "E04",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:E05",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "E05",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:E06",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "E06",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:E07",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "E07",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:E08",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "E08",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:E09",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "E09",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:E10",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "E10",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:S01",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "S01",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:S02",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "S02",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:S03",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "S03",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:S04",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "S04",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:S05",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "S05",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:S06",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "S06",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:S07",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "S07",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:S08",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "S08",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:S09",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "S09",
+      "expected": "pass"
+    },
+    {
+      "case_id": "regression:S10",
+      "subset": "regression",
+      "source": "evaluation/questions.json",
+      "source_id": "S10",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M01",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M01",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M02",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M02",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M03",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M03",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M04",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M04",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M05",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M05",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M06",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M06",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M07",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M07",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M08",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M08",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M09",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M09",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M10",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M10",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M11",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M11",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M12",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M12",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M13",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M13",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M14",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M14",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M15",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M15",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M16",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M16",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M17",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M17",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M18",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M18",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M19",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M19",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M20",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M20",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M21",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M21",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M22",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M22",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M23",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M23",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M24",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M24",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M25",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M25",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M26",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M26",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M27",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M27",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M28",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M28",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M29",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M29",
+      "expected": "pass"
+    },
+    {
+      "case_id": "memory_context:M30",
+      "subset": "memory_context",
+      "source": "evaluation/memory_cases.json",
+      "source_id": "M30",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL01",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL01",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL02",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL02",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL03",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL03",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL04",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL04",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL05",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL05",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL06",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL06",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL07",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL07",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL08",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL08",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL09",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL09",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL10",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL10",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL11",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL11",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL12",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL12",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL13",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL13",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL14",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL14",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL15",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL15",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL16",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL16",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL17",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL17",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL18",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL18",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL19",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL19",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL20",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL20",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL21",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL21",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL22",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL22",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL23",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL23",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL24",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL24",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:SL25",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "SL25",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL01",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL01",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL02",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL02",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL03",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL03",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL04",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL04",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL05",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL05",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL06",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL06",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL07",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL07",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL08",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL08",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL09",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL09",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL10",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL10",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL11",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL11",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL12",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL12",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL13",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL13",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL14",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL14",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL15",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL15",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL16",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL16",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL17",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL17",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL18",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL18",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL19",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL19",
+      "expected": "pass"
+    },
+    {
+      "case_id": "grounding:VL20",
+      "subset": "grounding",
+      "source": "evaluation/grounding_cases.json",
+      "source_id": "VL20",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:clarification:Q01",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "clarification:Q01",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:clarification:Q02",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "clarification:Q02",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:clarification:Q03",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "clarification:Q03",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:clarification:Q04",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "clarification:Q04",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:clarification:Q05",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "clarification:Q05",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:clarification:Q06",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "clarification:Q06",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:clarification:Q07",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "clarification:Q07",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:clarification:Q08",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "clarification:Q08",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:clarification:Q09",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "clarification:Q09",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:clarification:Q10",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "clarification:Q10",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:recovery:R01",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "recovery:R01",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:recovery:R02",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "recovery:R02",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:recovery:R03",
+      "subset": "clarification_resume",
+      "source": "evaluation/context_cases.json",
+      "source_id": "recovery:R03",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:resume:valid-single-use",
+      "subset": "clarification_resume",
+      "source": "phase-d-inline",
+      "source_id": "resume:valid-single-use",
+      "expected": "pass"
+    },
+    {
+      "case_id": "clarification_resume:resume:tamper-expiry-cross-user",
+      "subset": "clarification_resume",
+      "source": "phase-d-inline",
+      "source_id": "resume:tamper-expiry-cross-user",
+      "expected": "pass"
+    },
+    {
+      "case_id": "complex_drift_failure:C01:five-hop-join",
+      "subset": "complex_drift_failure",
+      "source": "phase-d-inline",
+      "source_id": "C01:five-hop-join",
+      "expected": "pass"
+    },
+    {
+      "case_id": "complex_drift_failure:C02:rule-drift",
+      "subset": "complex_drift_failure",
+      "source": "phase-d-inline",
+      "source_id": "C02:rule-drift",
+      "expected": "pass"
+    },
+    {
+      "case_id": "complex_drift_failure:C03:missing-provenance",
+      "subset": "complex_drift_failure",
+      "source": "phase-d-inline",
+      "source_id": "C03:missing-provenance",
+      "expected": "pass"
+    },
+    {
+      "case_id": "complex_drift_failure:C04:guard-failure",
+      "subset": "complex_drift_failure",
+      "source": "phase-d-inline",
+      "source_id": "C04:guard-failure",
+      "expected": "pass"
+    },
+    {
+      "case_id": "complex_drift_failure:C05:simple-p95",
+      "subset": "complex_drift_failure",
+      "source": "phase-d-inline",
+      "source_id": "C05:simple-p95",
+      "expected": "pass"
+    },
+    {
+      "case_id": "complex_drift_failure:C06:complex-p95",
+      "subset": "complex_drift_failure",
+      "source": "phase-d-inline",
+      "source_id": "C06:complex-p95",
+      "expected": "pass"
+    },
+    {
+      "case_id": "complex_drift_failure:C07:catalog-version-expired",
+      "subset": "complex_drift_failure",
+      "source": "phase-d-inline",
+      "source_id": "C07:catalog-version-expired",
+      "expected": "pass"
+    },
+    {
+      "case_id": "complex_drift_failure:C08:context-budget-failure",
+      "subset": "complex_drift_failure",
+      "source": "phase-d-inline",
+      "source_id": "C08:context-budget-failure",
+      "expected": "pass"
+    },
+    {
+      "case_id": "complex_drift_failure:C09:rollout-downgrade",
+      "subset": "complex_drift_failure",
+      "source": "phase-d-inline",
+      "source_id": "C09:rollout-downgrade",
+      "expected": "pass"
+    },
+    {
+      "case_id": "complex_drift_failure:C10:terminal-closure",
+      "subset": "complex_drift_failure",
+      "source": "phase-d-inline",
+      "source_id": "C10:terminal-closure",
+      "expected": "pass"
+    }
+  ]
+}
+

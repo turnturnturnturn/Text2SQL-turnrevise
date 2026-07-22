@@ -17,6 +17,7 @@ from app.grounding.query_plan import (
     QueryPlanValidator,
 )
 from app.harness.context import get_run_id
+from app.rollout.policy import effective_mode
 
 
 class ValidateQueryPlanTool(Tool[QueryPlanDraft]):
@@ -26,12 +27,14 @@ class ValidateQueryPlanTool(Tool[QueryPlanDraft]):
         *,
         store: QueryPlanStore | None = None,
         grounding_mode: str = "off",
+        trace_service=None,
     ) -> None:
         if grounding_mode not in {"off", "shadow", "enforce"}:
             raise ValueError("GROUNDING_V2_MODE must be off, shadow or enforce")
         self.validator = validator
         self.store = store
         self.grounding_mode = grounding_mode
+        self.trace_service = trace_service
 
     @property
     def name(self) -> str:
@@ -46,9 +49,10 @@ class ValidateQueryPlanTool(Tool[QueryPlanDraft]):
 
     async def execute(self, context: ToolContext, args: QueryPlanDraft) -> ToolResult:
         del context
+        grounding_mode = effective_mode("grounding", self.grounding_mode)
         state = get_grounding_state()
         if state is None or state.bundle is None:
-            blocking = self.grounding_mode == "enforce"
+            blocking = grounding_mode == "enforce"
             return ToolResult(
                 success=not blocking,
                 result_for_llm=(
@@ -71,7 +75,7 @@ class ValidateQueryPlanTool(Tool[QueryPlanDraft]):
         record_validated_plan(None)
         run_id = get_run_id()
         persistence_warning = None
-        if self.grounding_mode == "enforce" and (
+        if grounding_mode == "enforce" and (
             self.store is None or run_id is None
         ):
             return ToolResult(
@@ -84,7 +88,7 @@ class ValidateQueryPlanTool(Tool[QueryPlanDraft]):
             try:
                 await self.store.save(run_id, validated, state.bundle.snapshot)
             except Exception as exc:
-                if self.grounding_mode == "enforce":
+                if grounding_mode == "enforce":
                     return ToolResult(
                         success=False,
                         result_for_llm="QueryPlan evidence could not be persisted; execution is blocked.",
@@ -93,6 +97,12 @@ class ValidateQueryPlanTool(Tool[QueryPlanDraft]):
                     )
                 persistence_warning = type(exc).__name__
         record_validated_plan(validated)
+        if run_id is not None and self.trace_service is not None:
+            await self.trace_service.append(run_id, "plan_validated", {
+                "grounding_mode": grounding_mode,
+                "status": validated.status.value,
+                "db_copilot.grounding_coverage": validated.confidence,
+            })
 
         payload = {
             "status": validated.status.value,
@@ -104,7 +114,7 @@ class ValidateQueryPlanTool(Tool[QueryPlanDraft]):
         }
         rendered = "```json\n" + json.dumps(payload, ensure_ascii=False, indent=2) + "\n```"
         plan_valid = validated.status == QueryPlanStatus.VALID
-        success = plan_valid or self.grounding_mode != "enforce"
+        success = plan_valid or grounding_mode != "enforce"
         return ToolResult(
             success=success,
             result_for_llm=(
@@ -112,13 +122,13 @@ class ValidateQueryPlanTool(Tool[QueryPlanDraft]):
                 if plan_valid
                 else (
                     "QueryPlan cannot be executed. Resolve the listed issues.\n" + rendered
-                    if self.grounding_mode == "enforce"
+                    if grounding_mode == "enforce"
                     else "Shadow QueryPlan recorded differences; continue the legacy SQL path.\n" + rendered
                 )
             ),
             error=(
                 "; ".join(validated.errors)
-                if self.grounding_mode == "enforce" and not plan_valid
+                if grounding_mode == "enforce" and not plan_valid
                 else None
             ),
             ui_component=UiComponent(
@@ -137,7 +147,7 @@ class ValidateQueryPlanTool(Tool[QueryPlanDraft]):
                 **payload,
                 "error_type": (
                     "semantic_validation"
-                    if self.grounding_mode == "enforce" and not plan_valid
+                    if grounding_mode == "enforce" and not plan_valid
                     else None
                 ),
             },

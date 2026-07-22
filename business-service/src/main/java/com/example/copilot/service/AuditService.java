@@ -9,10 +9,13 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
 public class AuditService {
+    public record RunAudit(String runId, String eventType, String generatedSql,
+                           boolean success, Long durationMs) {}
     private final AuditEventRepository events;
 
     public AuditService(AuditEventRepository events) {
@@ -45,5 +48,12 @@ public class AuditService {
                 request.userId(), request.eventType(), request.requestId(),
                 request.originalInstructionHash(), request.generatedSql(), request.success(),
                 request.durationMs(), request.details()));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<RunAudit> getRunAudit(String runId) {
+        return events.findFirstByRequestIdOrderByCreatedAtDesc(runId).map(event ->
+                new RunAudit(event.getRequestId(), event.getEventType(),
+                        event.getGeneratedSql(), event.isSuccess(), event.getDurationMs()));
     }
 }

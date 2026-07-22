@@ -1,9 +1,16 @@
 import pytest
 from vanna.core.storage import Message
 from vanna.core.user import User
+from vanna.core.llm import LlmMessage
 
 from app.state import InMemoryStateRepository, MemoryContextEnhancer, MemoryService
 from app.state.context import RecentConversationFilter
+from app.state.models import MemoryValidity
+from app.state.context import ContextV2Enhancer
+from app.context_v2 import ContextCompiler
+from app.context_v2.store import InMemoryContextStore
+from app.harness.context import bind_request_context, reset_request_context
+from app.harness import InMemoryRunStore, RunRecord
 
 
 @pytest.mark.asyncio
@@ -13,7 +20,9 @@ async def test_context_uses_only_confirmed_memory_as_untrusted_evidence():
     enhancer = MemoryContextEnhancer(service)
     user = User(id="u1")
 
-    assert await enhancer.enhance_system_prompt("SYSTEM", "华东销售额", user) == "SYSTEM"
+    assert (
+        await enhancer.enhance_system_prompt("SYSTEM", "华东销售额", user) == "SYSTEM"
+    )
     await service.confirm("u1", candidate.id)
     prompt = await enhancer.enhance_system_prompt("SYSTEM", "华东销售额", user)
     assert "confirmed_user_memory" in prompt
@@ -32,8 +41,151 @@ async def test_conversation_filter_keeps_six_user_turns_and_summary():
             ]
         )
     filtered = await RecentConversationFilter(user_turns=6).filter_messages(messages)
-    assert filtered[0].role == "system"
+    assert filtered[0].role == "assistant"
     assert "非权威" in filtered[0].content
     assert [message.content for message in filtered if message.role == "user"] == [
         f"question-{index}" for index in range(2, 8)
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "validity",
+    [MemoryValidity.INVALID, MemoryValidity.CONFLICTED, MemoryValidity.SUPERSEDED],
+)
+async def test_non_active_confirmed_memory_is_never_recalled(validity):
+    service = MemoryService(InMemoryStateRepository())
+    memory = await service.create_candidate(
+        "u1", "GMV includes DRAFT", validity=validity
+    )
+    await service.confirm("u1", memory.id)
+
+    assert await service.search_confirmed("u1", "GMV DRAFT") == []
+    assert await service.list_for_user("u1", confirmed_only=True) == []
+
+
+@pytest.mark.asyncio
+async def test_confirming_new_conflicting_memory_supersedes_old_memory():
+    repository = InMemoryStateRepository()
+    service = MemoryService(repository)
+    old = await service.create_candidate(
+        "u1", "sales time uses created_at", conflict_key="sales_time"
+    )
+    await service.confirm("u1", old.id)
+    new = await service.create_candidate(
+        "u1", "sales time uses paid_at", conflict_key="sales_time"
+    )
+    await service.confirm("u1", new.id)
+
+    matches = await service.search_confirmed("u1", "sales time", similarity_threshold=0)
+    assert [memory.id for _, memory in matches] == [new.id]
+    assert (
+        await repository.get_memory(old.id, "u1")
+    ).validity == MemoryValidity.SUPERSEDED
+    assert any(event.event_type == "superseded" for event in repository.memory_events)
+
+
+@pytest.mark.asyncio
+async def test_context_v2_enhancer_compiles_and_persists_redacted_manifest():
+    service = MemoryService(InMemoryStateRepository())
+    memory = await service.create_candidate("u1", "默认按华东区域展示")
+    await service.confirm("u1", memory.id)
+    store = InMemoryContextStore()
+    run_store = InMemoryRunStore()
+    await run_store.create(RunRecord("run-context", "u1", None, "a" * 64))
+    enhancer = ContextV2Enhancer(
+        service,
+        ContextCompiler(token_estimator=len),
+        store,
+        mode="enforce",
+        total_token_budget=3000,
+        run_store=run_store,
+    )
+    tokens = bind_request_context("run-context", "查询华东销售额")
+    try:
+        prompt = await enhancer.enhance_system_prompt(
+            "SYSTEM SAFETY", "查询华东销售额", User(id="u1")
+        )
+    finally:
+        reset_request_context(tokens)
+
+    assert prompt == "SYSTEM SAFETY"
+    assert memory.content not in prompt
+    manifest = await store.get_manifest("run-context")
+    assert manifest["provenance_coverage"] == 1.0
+    assert "SYSTEM SAFETY" not in str(manifest)
+    checkpoint = (await run_store.list_checkpoints("run-context"))[0]
+    assert checkpoint.artifacts[0]["artifact_type"] == "context_manifest"
+
+
+class FailingContextStore(InMemoryContextStore):
+    async def save_manifest(self, manifest):
+        raise RuntimeError("manifest database unavailable")
+
+
+@pytest.mark.asyncio
+async def test_shadow_context_failure_preserves_legacy_answer_path():
+    service = MemoryService(InMemoryStateRepository())
+    enhancer = ContextV2Enhancer(
+        service, ContextCompiler(), FailingContextStore(), mode="shadow"
+    )
+    tokens = bind_request_context("run-shadow", "query")
+    try:
+        assert (
+            await enhancer.enhance_system_prompt("SYSTEM", "query", User(id="u1"))
+            == "SYSTEM"
+        )
+    finally:
+        reset_request_context(tokens)
+
+
+@pytest.mark.asyncio
+async def test_enforce_context_failure_is_fail_closed():
+    service = MemoryService(InMemoryStateRepository())
+    enhancer = ContextV2Enhancer(
+        service, ContextCompiler(), FailingContextStore(), mode="enforce"
+    )
+    tokens = bind_request_context("run-enforce", "query")
+    try:
+        with pytest.raises(RuntimeError, match="manifest database unavailable"):
+            await enhancer.enhance_system_prompt("SYSTEM", "query", User(id="u1"))
+    finally:
+        reset_request_context(tokens)
+
+
+@pytest.mark.asyncio
+async def test_every_llm_call_compiles_conversation_and_tool_evidence_with_roles():
+    service = MemoryService(InMemoryStateRepository())
+    memory = await service.create_candidate("u1", "默认按华东区域展示")
+    await service.confirm("u1", memory.id)
+    store = InMemoryContextStore()
+    enhancer = ContextV2Enhancer(
+        service,
+        ContextCompiler(token_estimator=len),
+        store,
+        mode="enforce",
+        total_token_budget=5000,
+    )
+    tokens = bind_request_context("run-full", "查询华东销售额")
+    try:
+        await enhancer.enhance_system_prompt(
+            "SYSTEM SAFETY", "查询华东销售额", User(id="u1")
+        )
+        result = await enhancer.enhance_user_messages(
+            [
+                LlmMessage(role="user", content="查询华东销售额"),
+                LlmMessage(role="assistant", content="我将检索语义目录"),
+                LlmMessage(
+                    role="tool", content="orders.status=PAID", tool_call_id="t1"
+                ),
+            ],
+            User(id="u1"),
+        )
+    finally:
+        reset_request_context(tokens)
+    assert result[0].role == "assistant"
+    assert memory.content in result[0].content
+    manifest = await store.get_manifest("run-full")
+    partitions = {entry["partition"] for entry in manifest["included_items"]}
+    assert {"safety", "request", "memory", "conversation", "evidence"} <= partitions
+    assert len(await store.list_manifests("run-full")) == 2

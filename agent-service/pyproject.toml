@@ -16,6 +16,8 @@ dependencies = [
   "psycopg[binary]>=3.2,<4",
   "pandas>=2.2,<3",
   "sentence-transformers==3.4.1",
+  "opentelemetry-sdk>=1.36,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.36,<2",
 ]
 
 [project.optional-dependencies]

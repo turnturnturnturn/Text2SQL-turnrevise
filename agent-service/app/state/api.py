@@ -3,12 +3,38 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from fastapi import APIRouter, Header, HTTPException, Response, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from vanna.servers.base import ChatStreamChunk
 
+from app.harness.clarification import (
+    ClarificationAlreadyAnswered,
+    ClarificationExpired,
+    ClarificationService,
+    ResumeExpired,
+    ResumeInvalid,
+    ResumeNotFound,
+    ResumeReplay,
+)
 from app.harness.store import RunStore
 from app.security.jwt_resolver import JwtUserResolver
 from app.state.conversation_store import PostgresConversationStore
 from app.state.memory_service import MemoryService
 from app.grounding.plan_store import QueryPlanStore
+from app.context_v2.store import ContextStore
+from app.evidence import EvidenceService
+
+
+class ClarificationAnswer(BaseModel):
+    option_id: str
+
+
+class ResumeRequest(BaseModel):
+    token: str
+
+
+class RollbackRequest(BaseModel):
+    reason: str = "manual_rollback"
 
 
 def create_state_router(
@@ -18,6 +44,14 @@ def create_state_router(
     conversation_store: PostgresConversationStore,
     run_store: RunStore,
     query_plan_store: QueryPlanStore | None = None,
+    clarification_service: ClarificationService | None = None,
+    context_store: ContextStore | None = None,
+    evidence_service: EvidenceService | None = None,
+    clarification_resume_mode: str = "off",
+    resume_handler=None,
+    trace_service=None,
+    rollout_service=None,
+    business_client=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agent-state"])
 
@@ -90,6 +124,188 @@ def create_state_router(
             if query_plan_store is None
             else await query_plan_store.list_for_run(run_id)
         )
-        return {"run_id": run_id, "query_plans": plans}
+        if evidence_service is None:
+            return {"run_id": run_id, "query_plans": plans}
+        view = await evidence_service.build(run, is_admin=is_admin)
+        # Keep the old field during Phase D rollout; its records are already redacted.
+        view["query_plans"] = plans
+        return view
+
+    @router.post("/runs/{run_id}/clarify")
+    async def clarify_run(
+        run_id: str,
+        answer: ClarificationAnswer,
+        authorization: str | None = Header(default=None),
+    ):
+        user = user_from_header(authorization)
+        run = await run_store.get(run_id)
+        if run is None or run.user_id != str(user.id):
+            raise HTTPException(status_code=404, detail="Run not found")
+        if clarification_service is None:
+            raise HTTPException(status_code=404, detail="Clarification not available")
+        try:
+            if clarification_resume_mode == "off":
+                child = await clarification_service.answer(
+                    run_id, str(user.id), answer.option_id
+                )
+            else:
+                child = await clarification_service.answer_with_resume(
+                    run_id, str(user.id), answer.option_id
+                )
+        except ClarificationAlreadyAnswered as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ClarificationExpired as exc:
+            raise HTTPException(status_code=410, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return asdict(child)
+
+    @router.post("/runs/{child_run_id}/resume")
+    async def resume_run(
+        child_run_id: str,
+        request: ResumeRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        user = user_from_header(authorization)
+        if (
+            clarification_resume_mode == "off"
+            or clarification_service is None
+            or resume_handler is None
+        ):
+            raise HTTPException(status_code=404, detail="Resume not available")
+        child = await run_store.get(child_run_id)
+        if child is None or child.user_id != str(user.id):
+            raise HTTPException(status_code=404, detail="Run not found")
+        parent = await run_store.get(child.parent_run_id or "")
+        if parent is None or not child.conversation_id:
+            raise HTTPException(status_code=409, detail="Original conversation unavailable")
+        finder = getattr(conversation_store, "find_instruction_by_hash", None)
+        instruction = (
+            await finder(
+                child.conversation_id, str(user.id), parent.instruction_hash
+            )
+            if finder is not None
+            else None
+        )
+        if instruction is None:
+            raise HTTPException(status_code=409, detail="Original instruction hash mismatch")
+        selection = await clarification_service.selected_evidence(parent.run_id)
+        if selection is None:
+            raise HTTPException(status_code=400, detail="Clarification evidence unavailable")
+        try:
+            claimed = await clarification_service.claim_resume(
+                child_run_id, str(user.id), request.token
+            )
+        except ResumeNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ResumeReplay as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ResumeExpired as exc:
+            raise HTTPException(status_code=410, detail=str(exc)) from exc
+        except ResumeInvalid as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        async def generate():
+            try:
+                async for component in resume_handler(
+                    claimed, instruction, selection, authorization
+                ):
+                    chunk = ChatStreamChunk.from_component(
+                        component, child.conversation_id, child_run_id
+                    )
+                    yield f"data: {chunk.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as exc:
+                yield f'data: {{"type":"error","data":{{"message":"{type(exc).__name__}"}},"conversation_id":"{child.conversation_id}","request_id":"{child_run_id}"}}\n\n'
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
+
+    @router.get("/runs/{run_id}/context-manifest")
+    async def get_context_manifest(
+        run_id: str, authorization: str | None = Header(default=None)
+    ):
+        user = user_from_header(authorization)
+        run = await run_store.get(run_id)
+        is_admin = user.metadata.get("role") == "admin"
+        if run is None or (run.user_id != str(user.id) and not is_admin):
+            raise HTTPException(status_code=404, detail="Run not found")
+        if context_store is None:
+            raise HTTPException(status_code=404, detail="Context manifest not found")
+        manifest = await context_store.get_manifest(run_id)
+        if manifest is None:
+            raise HTTPException(status_code=404, detail="Context manifest not found")
+        return manifest
+
+    @router.get("/runs/{run_id}/trace")
+    async def get_run_trace(
+        run_id: str, authorization: str | None = Header(default=None)
+    ):
+        user = user_from_header(authorization)
+        run = await run_store.get(run_id)
+        is_admin = user.metadata.get("role") == "admin"
+        if run is None or (run.user_id != str(user.id) and not is_admin):
+            raise HTTPException(status_code=404, detail="Run not found")
+        if trace_service is None:
+            raise HTTPException(status_code=404, detail="Trace not available")
+        return {
+            "run_id": run_id,
+            "correlation_id": run.correlation_id,
+            "events": await trace_service.list_events(run_id),
+        }
+
+    @router.post("/runs/{run_id}/cancel")
+    async def cancel_run(
+        run_id: str, authorization: str | None = Header(default=None)
+    ):
+        user = user_from_header(authorization)
+        run = await run_store.get(run_id)
+        is_admin = user.metadata.get("role") == "admin"
+        if run is None or (run.user_id != str(user.id) and not is_admin):
+            raise HTTPException(status_code=404, detail="Run not found")
+        cancelled = await run_store.cancel(run_id, run.user_id)
+        return asdict(cancelled)
+
+    @router.get("/ops/rollouts")
+    async def list_rollouts(authorization: str | None = Header(default=None)):
+        user = user_from_header(authorization)
+        if user.metadata.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin role required")
+        if rollout_service is None:
+            raise HTTPException(status_code=404, detail="Rollout service unavailable")
+        return {"policies": [asdict(item) for item in await rollout_service.list_policies()]}
+
+    @router.post("/ops/rollouts/{policy_id}/rollback")
+    async def rollback_rollout(
+        policy_id: str,
+        request: RollbackRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        user = user_from_header(authorization)
+        if user.metadata.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin role required")
+        if rollout_service is None:
+            raise HTTPException(status_code=404, detail="Rollout service unavailable")
+        try:
+            policy = await rollout_service.rollback(
+                policy_id, actor=str(user.id), reason=request.reason
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Policy not found") from exc
+        if business_client is not None:
+            await business_client.record_audit_event({
+                "eventType": "ROLLOUT_ROLLBACK",
+                "userId": str(user.id),
+                "requestId": f"rollout:{policy.policy_id}",
+                "originalInstructionHash": None,
+                "generatedSql": None,
+                "success": True,
+                "durationMs": 0,
+                "details": {
+                    "policyId": policy.policy_id,
+                    "policyVersion": policy.version,
+                    "reason": request.reason,
+                },
+            })
+        return asdict(policy)
 
     return router
