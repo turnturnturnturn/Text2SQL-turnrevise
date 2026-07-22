@@ -1,6 +1,29 @@
 # Enterprise Database Copilot
 
-一个基于 Vanna 2.0.2、FastAPI、Spring Boot 与 PostgreSQL 的受控数据库 Agent。它把自然语言查询与业务写操作彻底分开：查询只能通过只读 SQL 工具，写操作只能调用固定业务接口并经过用户确认。
+Enterprise Database Copilot 是一个面向企业数据库的受控 Text2SQL Agent 框架。使用者下载项目后，可以接入自己的 OpenAI-compatible 大模型 API，或接入本地 Ollama 模型，在浏览器里体验一个带权限、审计、证据链和安全 SQL 防护的数据库 Copilot。
+
+这个项目的重点不是“让模型直接写 SQL 然后执行”，而是把自然语言问题拆成可验证流程：语义目录检索、Schema/Value Linking、QueryPlan 校验、安全 SQL 执行、证据展示和审计追踪。业务写操作与只读查询彻底分离，写操作只能走固定业务接口和用户确认。
+
+## 适合谁
+
+- 想快速体验 Text2SQL Agent 的开发者。
+- 想把自己的大模型 API 接到数据库问答系统里的团队。
+- 想研究企业级 Agent 安全边界、审批、审计、评测和灰度发布的人。
+- 想基于现有框架二次开发数据库 Copilot、BI Copilot 或运营分析 Agent 的同学。
+
+## 功能概览
+
+- 自然语言查询 PostgreSQL 示例业务库。
+- 支持 OpenAI-compatible API，也支持本地 Ollama。
+- 浏览器 UI：登录后直接对话体验 agent。
+- 只读 SQL Guard：拒绝 DML、DDL、多语句、危险函数、敏感字段和超时查询。
+- Schema/Value Linking：基于语义目录把问题链接到表、字段、值和 confirmed join。
+- QueryPlan 校验：SQL 执行前核对计划中的表、字段、过滤、分组、排序和 join。
+- Evidence API / Drawer：展示脱敏后的查询依据、计划、验证状态和来源 hash。
+- Harness：统一 run_id、状态机、预算、工具调用上限、纠错和澄清续跑。
+- Memory / Context Compiler：用户确认后才写入记忆，并在上下文编译时记录 provenance。
+- 评测套件：包含回归题、Memory/Context、Grounding 和阶段 D 发布门槛。
+- 灰度开关：Grounding、Context、Evidence、OTel、Clarification、Rollout 均支持 `off|shadow|enforce`。
 
 ## 架构
 
@@ -20,118 +43,160 @@ PostgreSQL          business-service (Spring Boot)
                      PostgreSQL
 ```
 
-安全边界：
+主要目录：
 
-- Vanna 原生 `RunSqlTool` 未注册；`SafeReadSqlTool` 仅接受白名单 `SELECT`/只读 CTE。
-- 查询使用独立 PostgreSQL 只读账号，并启用只读事务和 5 秒超时。
-- `analyst` 只能查询；`operator` 可预览订单写操作；软删除仅限 `admin`。
-- 每次写操作先生成待审批记录，确认令牌绑定用户、操作内容、数据版本和 5 分钟有效期。
-- 确认按钮发送确定性命令，由 WorkflowHandler 截获，不交给 LLM 决策。
-- Vanna 工具访问、SQL 调用、结果、耗时及原始指令哈希统一写入 `audit_events`；默认审计不可用时拒绝执行。
-- `RequestHarness` 为每次请求提供统一 `run_id`、状态机、120 秒总预算、8 次工具上限和 2 次只读纠错上限。
-- 会话、运行轨迹和长期记忆写入独立 `agent_state` Schema；该账号没有业务表读写权限。
-- “记住/以后按……”只生成候选卡片，用户确认后才会作为不可信参考上下文参与召回。
-- Grounding v2 从版本化目录执行双向 Schema Linking、confirmed Join 寻路和受控 Value Linking；Restricted 与候选关系不进入自动执行证据。
-- `enforce` 模式要求 SQL 前存在有效 QueryPlan，并确定性核对表、字段、值、分组和 Join；默认 `shadow` 只记录差异。
-- Context Compiler v2 为安全、请求、计划、Grounding、证据、记忆与会话分配 token 预算，并为所有入模条目记录来源；安全与当前请求不可裁剪。
-- 结构化 ConversationState 保留约束、选择、拒绝项和来源 message id；错误、冲突、过期及被取代记忆不会进入模型上下文。
-- Harness v2 支持阶段状态、脱敏 checkpoint、取消和只读恢复 child run；业务写入与审批永不自动恢复或重放。
-- `enforce` 下 Grounding 的来源化歧义会停在 `NEEDS_CLARIFICATION`，用户回答一次性澄清卡后创建新的只读 child run。
+- `agent-service`：Vanna Agent、安全 SQL、Schema/Value Linking、QueryPlan、Evidence、Harness。
+- `business-service`：JWT、固定业务接口、审批状态机、事务、乐观锁和审计。
+- `database/init`：PostgreSQL 示例 Schema、样例数据、语义目录、只读角色和迁移。
+- `evaluation`：回归、Memory、Grounding、Context、Release 评测集。
+- `docs`：Text2SQL 研究映射、架构说明、发布和回滚手册。
+- `scripts`：本地启动、迁移、评测和开源发布检查脚本。
 
-## 目录
+## 5 分钟快速体验
 
-- `agent-service`：Vanna Agent、安全 SQL、Schema/指标检索、审批卡片。
-- `business-service`：JWT、固定 CRUD、审批状态机、事务、乐观锁、审计。
-- `database/init`：电商样例 Schema、数据、指标口径与只读角色。
-- `compose.yaml`：PostgreSQL 和两个服务的一键编排。
-- `evaluation`：60 条中文标准题集与自动化质量报告。
-- `evaluation/memory_cases.json`：30 条 gold memory、错误记忆和隔离场景专项题集。
-- `evaluation/grounding_cases.json`：25 条 Schema/Join 与 20 条受控值链接专项题集。
-- `evaluation/context_cases.json`：15 条长上下文关键约束、10 条澄清和 3 条恢复安全专项题集。
-- `docs/TEXT2SQL_RESEARCH_NOTES.md`：最新 Text2SQL 研究映射、已落地优化及后续路线。
-- `docs/architecture/HARNESS_AND_MEMORY.md`：Harness、上下文编译、持久记忆和管理接口。
-- `AGENTS.md`：Codex worktree 协作、安全不变量与统一完成标准。
+### 1. 克隆项目
 
-## 本地要求
+```bash
+git clone https://github.com/turnturnturnturn/Text2SQL-turnrevise.git
+cd Text2SQL-turnrevise
+```
 
-- Docker Desktop（推荐 4–5 GB 内存配额）
-- 或者 Python 3.11、JDK 21、Maven 3.6.3+、PostgreSQL 16
-- 云端模式需要 OpenAI-compatible API key；本地模式需要 Ollama
+如果 GitHub 默认分支不是 `main`，可以直接切到当前开源发布分支：
 
-你当前下载的 `/Users/turn/Downloads/vanna-main` 保留为源码参考，本工程不会修改它。生产构建固定依赖 `vanna==2.0.2`。
+```bash
+git checkout agent/framework-only-oss-release
+```
 
-## 启动
+### 2. 准备环境
+
+推荐使用 Docker Desktop。建议给 Docker 分配 4-5 GB 内存。
+
+本地需要：
+
+- Docker Desktop
+- 一个可用的大模型服务，二选一：
+  - 云端或学校/公司提供的 OpenAI-compatible API
+  - 本地 Ollama 模型
+
+### 3. 创建配置文件
 
 ```bash
 cp .env.example .env
-# 编辑 .env，至少设置 JWT_SECRET、INTERNAL_SERVICE_TOKEN 和 OPENAI_API_KEY
-docker compose up --build
 ```
 
-已有数据卷升级时先运行幂等迁移：
-
-```bash
-./scripts/apply-knowledge-migration.sh
-```
-
-该命令会创建只读 `semantic_catalog`，把现有 Schema、指标和验证 SQL 映射为带版本、来源哈希、信任级别和敏感度的统一语义资产，导入人工维护的低基数状态值，并创建脱敏 QueryPlan 记录。`GROUNDING_V2_MODE=off|shadow|enforce` 控制灰度；默认 `shadow` 保持当前答案路径，只增加证据和计划差异观测。
-
-阶段 C 的状态表和上下文清单可单独幂等升级：
-
-```bash
-./scripts/apply-context-migration.sh
-```
-
-`CONTEXT_HARNESS_V2_MODE=off|shadow|enforce` 默认同样为 `shadow`：`off` 使用旧上下文和旧生命周期；`shadow` 持久化脱敏 manifest/ConversationState 但不改变当前回答；`enforce` 使用分区编译、阶段状态和澄清门控。回滚只需切回 `off`，无需删除阶段 C 数据。
-
-切换策略：
-
-- `off`：只运行旧 hybrid retrieval；
-- `shadow`：旧结果继续供模型使用，同时运行 v2 并记录 evidence；
-- `enforce`：模型使用 v2 目录，必须依次完成 `search_schema_knowledge`、`validate_query_plan`、`safe_read_sql`。
-
-回滚只需改回 `off`，无需删除新表或迁移数据。
-
-服务地址：
-
-- 带 JWT 登录的 Copilot UI：<http://localhost:8000/app>
-- Vanna 原始调试页：<http://localhost:8000>
-- Spring Boot：<http://localhost:8080>
-- 健康检查：<http://localhost:8000/health>、<http://localhost:8080/actuator/health>
-
-开发样例账号仅用于本机：
-
-| 用户名 | 密码 | 角色 |
-|---|---|---|
-| analyst | analyst123 | analyst |
-| operator | operator123 | operator |
-| admin | admin123 | admin |
-
-登录：
-
-```bash
-curl -s http://localhost:8080/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"operator","password":"operator123"}'
-```
-
-浏览器调用 `/api/vanna/v2/chat_sse` 时必须携带返回的 `Authorization: Bearer <token>`。`/app` 登录壳页面会把 Token 保存在当前标签页的 `sessionStorage`，并通过 Web Component 的 `setCustomHeaders` 注入请求；关闭标签页后需要重新登录。
-
-## 模型切换
-
-### OpenAI-compatible API
-
-使用任意兼容 OpenAI API 的云端或自托管服务。项目不附带模型、模型转换工具或本机模型运行环境：
+打开 `.env`，至少修改这些字段：
 
 ```dotenv
+JWT_SECRET=replace-with-at-least-32-random-characters
+INTERNAL_SERVICE_TOKEN=replace-with-a-random-service-token
 LLM_PROVIDER=openai
 OPENAI_API_KEY=your-provider-api-key
 OPENAI_MODEL=your-provider-model
-# 第三方或自托管兼容服务设置 OPENAI_BASE_URL
 OPENAI_BASE_URL=https://your-provider.example/v1
 ```
 
-Ollama：
+不要把真实 API Key 提交到 GitHub。`.env` 是本地私密配置文件，项目不会要求你把模型权重或 API Key 放进仓库。
+
+### 4. 启动服务
+
+```bash
+./scripts/docker-compose.sh up --build -d
+```
+
+查看容器状态：
+
+```bash
+./scripts/docker-compose.sh ps
+```
+
+健康检查：
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8080/actuator/health
+```
+
+### 5. 打开浏览器体验
+
+访问：
+
+```text
+http://localhost:8000/app
+```
+
+开发演示账号：
+
+| 用户名 | 密码 | 角色 | 能力 |
+|---|---|---|---|
+| `analyst` | `analyst123` | analyst | 只读查询 |
+| `operator` | `operator123` | operator | 只读查询 + 业务写预览 |
+| `admin` | `admin123` | admin | 管理员演示能力 |
+
+可以先用这些问题测试：
+
+```text
+最近 30 天销售额是多少？
+各品类的订单金额排名前 5 是什么？
+退款被拒绝的订单有多少？
+找出最近 7 天付款但未发货的订单。
+```
+
+## 接入自己的大模型 API
+
+本项目使用 OpenAI-compatible Chat Completions 接口。只要你的服务支持类似下面的请求，就可以接入：
+
+```bash
+curl -X POST "https://your-provider.example/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key" \
+  -d '{"model":"your-provider-model","messages":[{"role":"user","content":"你好"}]}'
+```
+
+在 `.env` 中填写：
+
+```dotenv
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your-api-key
+OPENAI_MODEL=your-provider-model
+OPENAI_BASE_URL=https://your-provider.example/v1
+```
+
+常见例子：
+
+```dotenv
+# OpenAI 官方
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-5
+OPENAI_BASE_URL=
+```
+
+```dotenv
+# 第三方或学校统一入口
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=smart/reasoning
+OPENAI_BASE_URL=https://api.example.edu.cn/v1
+```
+
+改完 `.env` 后重启 agent：
+
+```bash
+./scripts/docker-compose.sh restart agent-service
+```
+
+如果你的 API 需要校园网、公司内网或 VPN，请先连上 VPN，再启动或重启 `agent-service`。浏览器仍然打开本地地址 `http://localhost:8000/app`，不是打开模型 API 地址。
+
+## 接入本地 Ollama
+
+如果你想完全本地体验，可以先安装并启动 Ollama，然后拉取一个模型：
+
+```bash
+ollama pull llama3.2
+ollama serve
+```
+
+`.env` 配置：
 
 ```dotenv
 LLM_PROVIDER=ollama
@@ -139,16 +204,54 @@ OLLAMA_HOST=http://host.docker.internal:11434
 OLLAMA_MODEL=llama3.2
 ```
 
-启动容器：
+然后启动或重启服务：
 
 ```bash
 ./scripts/docker-compose.sh up --build -d
-./scripts/docker-compose.sh ps
 ```
 
-`docker-compose.sh` 会优先使用系统 PATH 中的 Docker；若 CLI 尚未建立全局链接，则自动使用 Docker Desktop 应用内置的 CLI 和凭据助手。
+说明：
 
-## 支持的写操作
+- Docker 容器访问宿主机 Ollama 时通常使用 `http://host.docker.internal:11434`。
+- 模型越小，速度越快，但 Text2SQL、工具调用和澄清能力会弱一些。
+- 这个开源仓库不包含本地模型权重，也不绑定特定 Qwen、Llama 或其他模型。使用者可以自行选择 API 或本地模型。
+
+## 灰度开关
+
+默认配置偏保守，新能力大多以 `shadow` 运行：不改变主回答路径，但会记录计划、证据和差异。
+
+```dotenv
+GROUNDING_V2_MODE=shadow
+CONTEXT_HARNESS_V2_MODE=shadow
+EVIDENCE_DRAWER_MODE=shadow
+OTEL_MODE=shadow
+CLARIFICATION_RESUME_MODE=shadow
+ROLLOUT_POLICY_MODE=shadow
+```
+
+模式含义：
+
+- `off`：关闭新链路，走旧路径。
+- `shadow`：运行新链路并记录差异，但不阻断当前答案。
+- `enforce`：严格启用校验，缺少有效证据、计划或安全条件时 fail closed。
+
+生产环境建议先从 `shadow` 开始，完成评测和审计后再逐步切到 `enforce`。
+
+## 安全边界
+
+- Vanna 原生 `RunSqlTool` 未注册。
+- `SafeReadSqlTool` 只允许白名单 `SELECT` 和只读 CTE。
+- SQL 使用独立 PostgreSQL 只读账号，启用只读事务、5 秒超时和 200 行限制。
+- `analyst` 只能查询；`operator` 可以预览订单写操作；软删除仅限 `admin`。
+- 写操作必须先生成审批记录，确认令牌绑定用户、操作内容、数据版本和有效期。
+- 确认按钮发送确定性命令，由 WorkflowHandler 截获，不交给 LLM 决策。
+- 审计不可用时默认拒绝执行。
+- Restricted 资产、candidate join、过期值和未解决歧义不会进入自动执行证据。
+- `enforce` 模式下，无有效 QueryPlan 不执行 SQL。
+
+## 支持的业务写操作
+
+示例业务服务只开放固定动作，没有任意 SQL 写接口。
 
 - `CREATE_DRAFT_ORDER`
   - `payload.customerId`
@@ -162,7 +265,7 @@ OLLAMA_MODEL=llama3.2
   - `payload.orderId`
   - 仅 `admin`
 
-订单状态机为：
+订单状态机：
 
 ```text
 DRAFT -> UNPAID -> PAID -> SHIPPED
@@ -170,11 +273,9 @@ DRAFT -> UNPAID -> PAID -> SHIPPED
   +------> CANCELLED
 ```
 
-所有写操作都必须先调用 `/internal/actions/preview`，随后使用一次性令牌确认或取消。系统没有任意 SQL 写接口。
+## 运行评测
 
-## 测试
-
-Python：
+Python 单元测试：
 
 ```bash
 cd agent-service
@@ -184,45 +285,82 @@ pip install -e '.[test]'
 pytest
 ```
 
-Java：
+Java 单元测试：
 
 ```bash
 cd business-service
 mvn test
 ```
 
-查询质量评测（Docker 启动后执行）：
-
-```bash
-cd agent-service
-.venv/bin/python ../scripts/evaluate_retrieval.py \
-  --database-url 'postgresql://copilot_readonly:copilot_readonly_dev@localhost:5432/enterprise_copilot'
-```
-
-Grounding v2 离线验收不依赖数据库或模型下载：
+Grounding v2 离线验收：
 
 ```bash
 ./scripts/evaluate_grounding.py --check
 ```
 
-该脚本调用生产 linker 代码，检查 Table Recall@5、Column Recall@10、Join Path Exact Match、Value Recall@3 和 candidate Join 零执行；这些指标不代表模型 Text2SQL 准确率。
+完整本地验证：
 
-脚本比较关键词基线与 BGE 中文向量 + RRF 混合检索，并将本次实际运行的 Recall@3、Recall@5、MRR、静态安全拦截率、Oracle SQL 执行成功率和完整结果等价率输出到 `evaluation/reports/`。增加 `--live-agent` 后，还会通过真实 SSE 接口评测已配置模型的 SQL 执行、结果等价、危险请求无执行和审计哈希关联率；`--harness-input` 可追加运行完成率、纠错率、Memory Recall@5、延迟和失败分类。详情参见 [评测说明](evaluation/README.md) 和 [作品集说明](PORTFOLIO.md)。
+```bash
+./scripts/verify-all.sh
+```
 
-Agent Docker 镜像不包含 CUDA/NVIDIA 运行库；本地模型由使用者自行安装和运行。
+真实模型端到端评测需要显式打开：
 
-端到端重点验证：
+```bash
+RUN_E2E=1 ./scripts/verify-all.sh
+```
 
-1. 多语句、DML、DDL、跨 Schema、敏感字段与超量 `LIMIT` 均被拒绝。
-2. analyst 无法获得写工具，也不能调用业务写接口。
-3. 过期、重复、篡改、跨用户或版本过期的审批无法执行。
-4. 写操作失败时业务事务回滚，并产生失败审计记录。
-5. `SELECT INTO`、`FOR UPDATE` 与未审核的 PostgreSQL/自定义函数均被拒绝。
+离线评测和 live-model 指标严格分开；如果本地模型或 API 不可用，项目不会据此宣称 Text2SQL 提升。
+
+## 常见问题
+
+### 浏览器应该打开哪个地址？
+
+打开本地 UI：
+
+```text
+http://localhost:8000/app
+```
+
+模型 API 地址只给后端调用。即使你的模型入口需要 VPN，连上 VPN 后也还是打开本地 UI。
+
+### API Key 测试成功，但页面回答失败怎么办？
+
+先重启 agent：
+
+```bash
+./scripts/docker-compose.sh restart agent-service
+```
+
+再看日志：
+
+```bash
+./scripts/docker-compose.sh logs -f agent-service
+```
+
+常见原因是 `OPENAI_BASE_URL` 少了 `/v1`，模型名写错，或 VPN/网络代理只对浏览器生效、没有对 Docker/终端生效。
+
+### 本地模型太小会影响效果吗？
+
+会。小模型通常能跑通流程，但复杂 Text2SQL、工具选择、澄清和多跳推理会明显弱一些。建议先用 OpenAI-compatible 云端模型验证框架，再用本地模型做成本、隐私和延迟优化。
+
+### 可以换自己的数据库吗？
+
+可以，但需要补齐三件事：
+
+- 修改 `database/init` 中的业务表和样例数据。
+- 维护 `semantic_catalog`、指标口径、字段描述、状态值字典和 confirmed join。
+- 增加对应的评测 case，确保安全 SQL、QueryPlan 和 Evidence 仍然可验证。
 
 ## 上线前必须调整
 
-- 替换全部开发密码和 HS256 密钥，推荐改为非对称 JWT。
-- 将只读角色创建移出初始化 SQL，交由密钥管理和数据库运维系统维护。
-- 根据数据规模评估 pgvector；当前小规模记忆使用 PostgreSQL `REAL[]` 与 Agent 内 RRF。
+- 替换全部开发密码和 HS256 密钥，推荐接入正式身份系统或非对称 JWT。
+- 将只读角色创建移出初始化 SQL，交给密钥管理和数据库运维系统维护。
+- 根据数据规模评估 pgvector 或外部向量数据库。
 - 在反向代理上配置 TLS、限流、SSE 超时和安全响应头。
-- 将演示登录壳替换为正式身份提供方，并自托管或锁定前端组件资源。
+- 将演示登录壳替换为正式身份提供方。
+- 明确 trace、metric、audit 和 memory 的保留周期与脱敏策略。
+
+## 许可证
+
+本项目使用 MIT License。详见 [LICENSE](LICENSE)。
