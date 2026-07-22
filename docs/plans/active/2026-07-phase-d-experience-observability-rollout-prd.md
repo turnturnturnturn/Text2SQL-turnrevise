@@ -2,8 +2,8 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 状态 | Draft v1.0，待评审 |
-| 日期 | 2026-07-21 |
+| 状态 | Release Candidate；真实模型 E2E 与生产灰度待完成 |
+| 日期 | 2026-07-22 |
 | 前置版本 | 阶段 A–C 已完成；分支 `feat/phase-c-context-harness` |
 | 建议周期 | 3–4 周；按可独立验收的 4 个里程碑交付 |
 | 默认发布模式 | `shadow`；任何真实用户流量进入 `enforce` 均须显式配置 |
@@ -234,3 +234,12 @@ request_received → context_compiled → schema_linked → value_linked
 
 回滚顺序：先将 cohort 强制降为 `shadow`，再关闭对应 UI/telemetry exporter；保留 run、evidence、trace 与评测数据用于审计。禁止通过删除 migration 或重写历史 run 实现回滚。
 
+## 10. 当前上线就绪度（2026-07-22）
+
+阶段 D 已达到技术 Release Candidate，估算距完整 GA 上线 **94%**。已完成数据底座、Evidence Drawer、澄清 child run 续跑、脱敏 trace/metrics、稳定分桶、管理员回滚、160 题发布评测和三角色浏览器验收；完整离线验证通过。
+
+剩余 GA 门槛：
+
+- 提供可用的真实模型凭证，运行 `RUN_E2E=1` live-agent 评测；当前 live-model 指标保持 `null`，不宣称 Text2SQL 线上提升。
+- 与目标 OTLP Collector、dashboard 和值班告警通道做一次真实集成演练。
+- 按 internal → 10% → 50% → GA 执行观察窗口；只有线上安全、错误率、P95、provenance 和终态闭合门槛持续满足后才归档本 PRD。

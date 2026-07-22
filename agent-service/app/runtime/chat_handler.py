@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 
 from vanna.servers.base import ChatHandler, ChatRequest, ChatStreamChunk
 
@@ -33,14 +34,17 @@ class CorrelatedChatHandler(ChatHandler):
                 )
             manager = bind_rollout_decision(decision) if decision is not None else _null_context()
             with manager:
-                async for component in self.agent.send_message(
-                    request_context=request.request_context,
-                    message=request.message,
-                    conversation_id=conversation_id,
-                ):
-                    yield ChatStreamChunk.from_component(
-                        component, conversation_id, run_id
+                async with aclosing(
+                    self.agent.send_message(
+                        request_context=request.request_context,
+                        message=request.message,
+                        conversation_id=conversation_id,
                     )
+                ) as stream:
+                    async for component in stream:
+                        yield ChatStreamChunk.from_component(
+                            component, conversation_id, run_id
+                        )
 
 
 class _null_context:

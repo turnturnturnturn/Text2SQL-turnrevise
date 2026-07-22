@@ -20,6 +20,21 @@ class CapturingAgent:
         )
 
 
+class DisconnectAwareAgent:
+    def __init__(self):
+        self.closed = False
+
+    async def send_message(self, **_kwargs):
+        try:
+            while True:
+                yield UiComponent(
+                    rich_component=RichTextComponent(content="streaming"),
+                    simple_component=SimpleTextComponent(text="streaming"),
+                )
+        finally:
+            self.closed = True
+
+
 @pytest.mark.asyncio
 async def test_correlated_handler_ignores_client_request_id_for_durable_identity():
     agent = CapturingAgent()
@@ -35,4 +50,17 @@ async def test_correlated_handler_ignores_client_request_id_for_durable_identity
     assert chunks[0].request_id == agent.run_id
     assert chunks[0].request_id != "client-controlled"
     uuid.UUID(chunks[0].request_id)
+    assert current_run_id() is None
+
+
+@pytest.mark.asyncio
+async def test_correlated_handler_closes_agent_stream_when_client_disconnects():
+    agent = DisconnectAwareAgent()
+    handler = CorrelatedChatHandler(agent)
+    stream = handler.handle_stream(ChatRequest(message="question"))
+
+    await anext(stream)
+    await stream.aclose()
+
+    assert agent.closed is True
     assert current_run_id() is None

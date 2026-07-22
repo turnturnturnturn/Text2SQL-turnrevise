@@ -49,6 +49,7 @@ from app.tools import (
 from app.workflow import ActionWorkflowHandler
 from app.ui import login_shell
 from app.runtime import CorrelatedChatHandler
+from app.runtime.llm import NonBlockingLlmService
 from app.evidence import EvidenceService
 from app.observability import MetricsRegistry, PostgresTraceStore, TraceService
 from app.observability.otel import OtelBridge
@@ -69,9 +70,13 @@ def create_llm():
     if settings.llm_provider == "openai":
         from vanna.integrations.openai import OpenAILlmService
 
-        return OpenAILlmService(
-            model=settings.openai_model,
-            base_url=settings.openai_base_url,
+        return NonBlockingLlmService(
+            OpenAILlmService(
+                model=settings.openai_model,
+                base_url=settings.openai_base_url,
+                timeout=min(settings.harness_timeout_seconds, 30),
+                max_retries=0,
+            )
         )
     raise ValueError("LLM_PROVIDER must be 'openai' or 'ollama'")
 
