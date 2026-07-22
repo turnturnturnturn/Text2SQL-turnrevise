@@ -1,4 +1,5 @@
 .env
+agent-service/.venv-mlx/
 .idea/
 .vscode/
 .DS_Store
