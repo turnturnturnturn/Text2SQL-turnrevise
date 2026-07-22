@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+echo "[verify] Open-source release boundary"
+"$ROOT/scripts/oss-preflight.sh"
+
 if [[ -x "$ROOT/agent-service/.venv/bin/python" ]]; then
   PYTHON="$ROOT/agent-service/.venv/bin/python"
 else
