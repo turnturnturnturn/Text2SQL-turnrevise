@@ -7,6 +7,8 @@
 3. 运行 `scripts/evaluate_release.py --check`，确认 160 个唯一 case、危险执行为 0、60 题严格等价率 100%。无模型时 `live_model` 必须为 `null`。
 4. 检查敏感遥测、跨用户访问、业务写恢复均为 0，provenance 与终态闭合率均为 100%。
 
+浏览器与 business-service 分端口部署时，必须把实际 Agent 页面 origin 写入 `BUSINESS_ALLOWED_ORIGINS`（逗号分隔、包含 scheme 与端口），否则浏览器登录预检会被拒绝。`AGENT_ALLOWED_ORIGINS` 继续控制 agent-service 自身的跨域来源，两者不可混用。
+
 ## 灰度顺序
 
 | 阶段 | cohort | 最短观察 | 晋级条件 |

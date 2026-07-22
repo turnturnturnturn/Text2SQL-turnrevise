@@ -26,6 +26,7 @@ services:
       DB_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-copilot_admin_dev}
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-before-use-123456}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token}
+      ALLOWED_ORIGINS: ${BUSINESS_ALLOWED_ORIGINS:-http://localhost:8000}
     ports:
       - "8080:8080"
     depends_on:

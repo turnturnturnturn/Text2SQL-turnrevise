@@ -27,4 +27,4 @@ copilot:
   jwt-ttl-minutes: 60
   internal-service-token: ${INTERNAL_SERVICE_TOKEN:dev-internal-token}
   approval-ttl-minutes: 5
-
+  allowed-origins: ${ALLOWED_ORIGINS:http://localhost:8000}
