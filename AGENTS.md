@@ -5,7 +5,7 @@
 - `agent-service` 负责意图理解、知识检索、受控 SQL 和 Harness 运行状态；不得绕过 business-service 执行业务写操作。
 - `business-service` 是身份、权限、审批令牌、业务写入和业务审计的权威边界。
 - PostgreSQL 中业务数据和 `agent_state` 必须使用分离账号与权限；Agent 状态账号不得写订单、客户或商品表。
-- 本地 Qwen/MLX 只负责推理；模型输出必须经过工具权限、SQL Guard、Intent Guard、Result Guard 和审批流。
+- 外部 LLM API 只负责推理；模型输出必须经过工具权限、SQL Guard、Intent Guard、Result Guard 和审批流。
 - 评测报告中的指标只能来自本次真实运行；不得把 Oracle SQL 指标当作模型 Text2SQL 指标。
 
 ## 安全不变量
@@ -28,7 +28,7 @@
 ## 验证与完成标准
 
 - 快速验证：`./scripts/verify-all.sh`，必须通过 Python 和 Java 测试。
-- 完整本地验收：启动 MLX 与 Docker 服务后运行 `RUN_E2E=1 ./scripts/verify-all.sh`。
+- 完整验收：配置外部 LLM API 并启动 Docker 服务后运行 `RUN_E2E=1 ./scripts/verify-all.sh`。
 - 改动 Harness/记忆时，必须增加状态转换、用户隔离、失败恢复、注入隔离或指标聚合中与改动对应的测试。
 - 不得回退已验证的安全策略，也不得在未完整运行时声称 Text2SQL 或 Harness 指标提升。
 - 代码、测试、架构文档和活动计划状态一致后，任务才算完成。

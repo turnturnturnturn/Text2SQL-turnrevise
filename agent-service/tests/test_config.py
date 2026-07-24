@@ -41,11 +41,3 @@ def test_phase_d_modes_and_retention_defaults(monkeypatch):
     assert reloaded.settings.trace_success_sample_rate == 0.05
     assert reloaded.settings.trace_retention_days == 30
     assert reloaded.settings.metric_retention_days == 90
-
-
-def test_ollama_model_default_is_provider_neutral(monkeypatch):
-    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
-    import app.config as config
-
-    reloaded = importlib.reload(config)
-    assert reloaded.settings.ollama_model == "llama3.2"

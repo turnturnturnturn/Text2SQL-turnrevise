@@ -7,7 +7,7 @@ name = "enterprise-copilot-agent"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-  "vanna[fastapi,postgres,openai,ollama]==2.0.2",
+  "vanna[fastapi,postgres,openai]==2.0.2",
   "fastapi>=0.115,<1",
   "uvicorn[standard]>=0.30,<1",
   "PyJWT>=2.9,<3",

@@ -15,7 +15,7 @@
 - Python：78 项通过。
 - 数据库迁移连续执行两次成功，验证状态账号拥有 `agent_state.memories` INSERT，但无 `public.orders` SELECT/INSERT。
 - Docker 最新 Agent 成功构建并启动；真实失败轨迹正确记录为 `FAILED / TypeError`，用于发现并修复嵌套 `super()` 问题。
-- 完整 20 题本地模型回归：SQL 执行、严格结果等价、危险请求无执行和审计关联均为 100%；Harness 20/20 完成、3/3 纠错成功、平均 1.20 次工具调用。
+- 完整 20 题历史 live-agent 回归：SQL 执行、严格结果等价、危险请求无执行和审计关联均为 100%；Harness 20/20 完成、3/3 纠错成功、平均 1.20 次工具调用。
 - 真实 PostgreSQL 状态账号完成候选不可召回、确认后召回、重新连接恢复会话和测试数据清理冒烟。
 
 ## 后续

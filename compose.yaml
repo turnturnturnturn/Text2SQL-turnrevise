@@ -42,12 +42,9 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-token}
       BUSINESS_SERVICE_URL: http://business-service:8080
       PUBLIC_BUSINESS_SERVICE_URL: http://localhost:8080
-      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       AGENT_ALLOWED_ORIGINS: ${AGENT_ALLOWED_ORIGINS:-http://localhost:8000,http://localhost:8080}
       AUDIT_FAIL_CLOSED: ${AUDIT_FAIL_CLOSED:-true}
       RETRIEVAL_MODE: ${RETRIEVAL_MODE:-hybrid}
