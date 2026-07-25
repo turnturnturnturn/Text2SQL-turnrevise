@@ -1,6 +1,6 @@
 # Enterprise Database Copilot
 
-Enterprise Database Copilot 是一个面向企业数据库的受控 Text2SQL Agent 框架。使用者下载项目后，可以接入自己的 OpenAI-compatible 大模型 API，或接入本地 Ollama 模型，在浏览器里体验一个带权限、审计、证据链和安全 SQL 防护的数据库 Copilot。
+Enterprise Database Copilot 是一个面向企业数据库的受控 Text2SQL Agent 框架。使用者下载项目后，可以接入自己的 OpenAI-compatible 外部大模型 API，在浏览器里体验一个带权限、审计、证据链和安全 SQL 防护的数据库 Copilot。
 
 这个项目的重点不是“让模型直接写 SQL 然后执行”，而是把自然语言问题拆成可验证流程：语义目录检索、Schema/Value Linking、QueryPlan 校验、安全 SQL 执行、证据展示和审计追踪。业务写操作与只读查询彻底分离，写操作只能走固定业务接口和用户确认。
 
@@ -14,7 +14,7 @@ Enterprise Database Copilot 是一个面向企业数据库的受控 Text2SQL Age
 ## 功能概览
 
 - 自然语言查询 PostgreSQL 示例业务库。
-- 支持 OpenAI-compatible API，也支持本地 Ollama。
+- 支持自定义 OpenAI-compatible 外部 API。
 - 浏览器 UI：登录后直接对话体验 agent。
 - 只读 SQL Guard：拒绝 DML、DDL、多语句、危险函数、敏感字段和超时查询。
 - Schema/Value Linking：基于语义目录把问题链接到表、字段、值和 confirmed join。
@@ -74,9 +74,7 @@ git checkout agent/framework-only-oss-release
 本地需要：
 
 - Docker Desktop
-- 一个可用的大模型服务，二选一：
-  - 云端或学校/公司提供的 OpenAI-compatible API
-  - 本地 Ollama 模型
+- 一个云端、学校或公司提供的 OpenAI-compatible 外部大模型 API
 
 ### 3. 创建配置文件
 
@@ -89,7 +87,6 @@ cp .env.example .env
 ```dotenv
 JWT_SECRET=replace-with-at-least-32-random-characters
 INTERNAL_SERVICE_TOKEN=replace-with-a-random-service-token
-LLM_PROVIDER=openai
 OPENAI_API_KEY=your-provider-api-key
 OPENAI_MODEL=your-provider-model
 OPENAI_BASE_URL=https://your-provider.example/v1
@@ -155,7 +152,6 @@ curl -X POST "https://your-provider.example/v1/chat/completions" \
 在 `.env` 中填写：
 
 ```dotenv
-LLM_PROVIDER=openai
 OPENAI_API_KEY=your-api-key
 OPENAI_MODEL=your-provider-model
 OPENAI_BASE_URL=https://your-provider.example/v1
@@ -165,7 +161,6 @@ OPENAI_BASE_URL=https://your-provider.example/v1
 
 ```dotenv
 # OpenAI 官方
-LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-5
 OPENAI_BASE_URL=
@@ -173,7 +168,6 @@ OPENAI_BASE_URL=
 
 ```dotenv
 # 第三方或学校统一入口
-LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=smart/reasoning
 OPENAI_BASE_URL=https://api.example.edu.cn/v1
@@ -186,35 +180,6 @@ OPENAI_BASE_URL=https://api.example.edu.cn/v1
 ```
 
 如果你的 API 需要校园网、公司内网或 VPN，请先连上 VPN，再启动或重启 `agent-service`。浏览器仍然打开本地地址 `http://localhost:8000/app`，不是打开模型 API 地址。
-
-## 接入本地 Ollama
-
-如果你想完全本地体验，可以先安装并启动 Ollama，然后拉取一个模型：
-
-```bash
-ollama pull llama3.2
-ollama serve
-```
-
-`.env` 配置：
-
-```dotenv
-LLM_PROVIDER=ollama
-OLLAMA_HOST=http://host.docker.internal:11434
-OLLAMA_MODEL=llama3.2
-```
-
-然后启动或重启服务：
-
-```bash
-./scripts/docker-compose.sh up --build -d
-```
-
-说明：
-
-- Docker 容器访问宿主机 Ollama 时通常使用 `http://host.docker.internal:11434`。
-- 模型越小，速度越快，但 Text2SQL、工具调用和澄清能力会弱一些。
-- 这个开源仓库不包含本地模型权重，也不绑定特定 Qwen、Llama 或其他模型。使用者可以自行选择 API 或本地模型。
 
 ## 灰度开关
 
@@ -304,13 +269,13 @@ Grounding v2 离线验收：
 ./scripts/verify-all.sh
 ```
 
-真实模型端到端评测需要显式打开：
+真实模型端到端评测需要显式打开；报告会把当前外部模型指标与离线和 Oracle 指标分开：
 
 ```bash
 RUN_E2E=1 ./scripts/verify-all.sh
 ```
 
-离线评测和 live-model 指标严格分开；如果本地模型或 API 不可用，项目不会据此宣称 Text2SQL 提升。
+离线评测和 live-model 指标严格分开；如果外部 API 不可用，项目不会据此宣称 Text2SQL 提升。
 
 ## 常见问题
 
@@ -340,9 +305,9 @@ http://localhost:8000/app
 
 常见原因是 `OPENAI_BASE_URL` 少了 `/v1`，模型名写错，或 VPN/网络代理只对浏览器生效、没有对 Docker/终端生效。
 
-### 本地模型太小会影响效果吗？
+### 外部模型能力会影响效果吗？
 
-会。小模型通常能跑通流程，但复杂 Text2SQL、工具选择、澄清和多跳推理会明显弱一些。建议先用 OpenAI-compatible 云端模型验证框架，再用本地模型做成本、隐私和延迟优化。
+会。能力较弱的模型通常能跑通流程，但复杂 Text2SQL、工具选择、澄清和多跳推理会明显变弱。建议优先选择支持稳定工具调用的 OpenAI-compatible 模型。
 
 ### 可以换自己的数据库吗？
 

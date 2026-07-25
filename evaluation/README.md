@@ -18,7 +18,7 @@ cd agent-service
 
 脚本分别运行 `keyword` 和 `hybrid`，报告 Recall@3、Recall@5、MRR、Oracle SQL 执行成功率、完整结果等价率与静态安全拦截率。完整结果比较忽略行列顺序，但保留重复行差异，并以 `1e-6` 容差比较数值。模型首次下载会进入 `HF_HOME`；在 Docker Compose 中该目录由 `embedding-cache` volume 持久化。
 
-启动 MLX 和三个 Docker 服务后，可增加真实 Agent 评测。它使用 analyst 登录，顺序执行 10 条查询和 10 条危险请求，从 SSE 安全查询组件读取实际结果，并用指令哈希核对审计事件：
+配置外部 LLM API 并启动三个 Docker 服务后，可增加真实 Agent 评测。它使用 analyst 登录，顺序执行 10 条查询和 10 条危险请求，从 SSE 安全查询组件读取实际结果，并用指令哈希核对审计事件：
 
 ```bash
 EVAL_PASSWORD=analyst123 \
@@ -28,7 +28,7 @@ EVAL_AUDIT_DATABASE_URL='postgresql://管理员:密码@localhost:5432/enterprise
   --live-agent
 ```
 
-报告会把 Retrieval、Oracle SQL 和 Qwen3-4B 实际 Agent 指标分开展示，不能用 Oracle 指标代替模型生成 SQL 的准确率。
+报告会把 Retrieval、Oracle SQL 和当前外部模型的实际 Agent 指标分开展示，不能用 Oracle 指标代替模型生成 SQL 的准确率。
 
 报告写入 `evaluation/reports/`，该目录被 Git 忽略，避免把一次运行的指标误当作固定结论提交。
 

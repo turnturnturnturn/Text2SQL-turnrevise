@@ -59,26 +59,16 @@ from app.rollout.monitor import RolloutMonitor
 
 
 def create_llm():
-    if settings.llm_provider == "ollama":
-        from vanna.integrations.ollama import OllamaLlmService
+    from vanna.integrations.openai import OpenAILlmService
 
-        return OllamaLlmService(
-            model=settings.ollama_model,
-            host=settings.ollama_host,
-            temperature=0.1,
+    return NonBlockingLlmService(
+        OpenAILlmService(
+            model=settings.openai_model,
+            base_url=settings.openai_base_url,
+            timeout=min(settings.harness_timeout_seconds, 30),
+            max_retries=0,
         )
-    if settings.llm_provider == "openai":
-        from vanna.integrations.openai import OpenAILlmService
-
-        return NonBlockingLlmService(
-            OpenAILlmService(
-                model=settings.openai_model,
-                base_url=settings.openai_base_url,
-                timeout=min(settings.harness_timeout_seconds, 30),
-                max_retries=0,
-            )
-        )
-    raise ValueError("LLM_PROVIDER must be 'openai' or 'ollama'")
+    )
 
 
 state_repository = PostgresStateRepository(settings.agent_state_database_url)
@@ -98,11 +88,7 @@ memory_service = MemoryService(
 conversation_store = PostgresConversationStore(state_repository)
 run_store = PostgresRunStore(
     settings.agent_state_database_url,
-    model_name=(
-        settings.openai_model
-        if settings.llm_provider == "openai"
-        else settings.ollama_model
-    ),
+    model_name=settings.openai_model,
     retrieval_mode=settings.retrieval_mode,
     v2_enabled=settings.context_harness_v2_mode != "off",
 )

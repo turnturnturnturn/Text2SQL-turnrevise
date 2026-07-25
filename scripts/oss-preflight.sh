@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-forbidden_paths='(^|/)(\.runtime|\.venv|\.venv-mlx|models|modelscope)(/|$)|(^|/)(prepare-local-qwen|start-local-qwen)\.sh$'
+forbidden_paths='(^|/)(\.runtime|\.venv|\.cache|models)(/|$)|\.(safetensors|gguf)$'
 if git ls-files | rg -n "$forbidden_paths"; then
   echo "[oss-preflight] tracked local model/runtime artifact found" >&2
   exit 1

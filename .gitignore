@@ -1,5 +1,4 @@
 .env
-agent-service/.venv-mlx/
 .idea/
 .vscode/
 .DS_Store
@@ -8,9 +7,6 @@ __pycache__/
 .ruff_cache/
 .venv/
 .runtime/
-agent-service/.venv-mlx/
-.runtime/models/
-.runtime/mlx-venv/
 .pytest_cache/
 .coverage
 htmlcov/

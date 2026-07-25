@@ -2,7 +2,7 @@
 
 ## 运行边界
 
-`RequestHarness` 是 Vanna 工具循环外的确定性控制层。它负责运行状态、上下文编译、预算、权限、验证、记忆候选与可观测性；配置的语言模型只负责理解请求、选择工具和组织答案。Harness 不放宽 SQL 或业务写入权限。
+`RequestHarness` 是 Vanna 工具循环外的确定性控制层。它负责运行状态、上下文编译、预算、权限、验证、记忆候选与可观测性；外部 LLM 只负责理解请求、选择工具和组织答案。Harness 不放宽 SQL 或业务写入权限。
 
 `CONTEXT_HARNESS_V2_MODE=off|shadow|enforce` 默认 `shadow`。旧流程保留用于 off/shadow 兼容；enforce 的查询流程为：
 

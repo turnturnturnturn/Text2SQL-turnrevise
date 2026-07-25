@@ -184,6 +184,33 @@ async def test_stale_run_recovery_only_fails_incomplete_runs():
 
 
 @pytest.mark.asyncio
+async def test_new_request_does_not_invalidate_active_run_in_same_conversation():
+    store = InMemoryRunStore()
+    stale = RunRecord("stale", "user", "conversation-1", "a" * 64)
+    await store.create(stale)
+    harness = RequestHarness(store)
+    observed_run_id = None
+
+    async def operation(run):
+        nonlocal observed_run_id
+        observed_run_id = run.run_id
+        yield "ok"
+
+    assert await collect(
+        harness.execute_stream(
+            instruction="retry query",
+            user_id="user",
+            conversation_id="conversation-1",
+            operation=operation,
+        )
+    ) == ["ok"]
+
+    assert (await store.get("stale")).status == RunStatus.RECEIVED
+    assert (await store.get("stale")).failure_type is None
+    assert (await store.get(observed_run_id)).status == RunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
 async def test_tool_and_retry_budgets_fail_closed():
     store = InMemoryRunStore()
     harness = RequestHarness(

@@ -50,7 +50,7 @@ def login_shell(public_business_service_url: str) -> str:
       <button type="submit">登录</button>
       <p id="error" role="alert"></p>
     </form>
-    <vanna-chat id="chat" sse-endpoint="/api/vanna/v2/chat_sse"></vanna-chat>
+    <vanna-chat id="chat"></vanna-chat>
   </main>
   <aside id="evidence-drawer" role="dialog" aria-modal="true" aria-labelledby="evidence-title">
     <header><strong id="evidence-title">答案依据</strong><button id="evidence-close" aria-label="关闭答案依据">关闭</button></header>
@@ -106,9 +106,29 @@ def login_shell(public_business_service_url: str) -> str:
       evidenceContent.innerHTML = renderEvidence(await response.json());
     }});
 
+    function installAuthenticatedFetch() {{
+      if (window.__copilotAuthenticatedFetchInstalled) return;
+      window.__copilotAuthenticatedFetchInstalled = true;
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = (input, init = {{}}) => {{
+        const url = typeof input === 'string' ? input : input?.url || '';
+        if (url.includes('/api/vanna/v2/chat_sse')) {{
+          const token = sessionStorage.getItem('copilot_token');
+          if (token) {{
+            const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+            headers.set('Authorization', `Bearer ${{token}}`);
+            return nativeFetch(input, {{ ...init, headers }});
+          }}
+        }}
+        return nativeFetch(input, init);
+      }};
+    }}
+
     async function showChat(token, role) {{
       await customElements.whenDefined('vanna-chat');
+      installAuthenticatedFetch();
       chat.setCustomHeaders({{ Authorization: `Bearer ${{token}}` }});
+      chat.setAttribute('sse-endpoint', '/api/vanna/v2/chat_sse');
       form.style.display = 'none';
       chat.style.display = 'block';
       logout.style.display = 'inline-block';
